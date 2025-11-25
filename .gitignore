@@ -1,0 +1,10 @@
+outputs/
+logs/
+models/
+__pycache__/
+*.pyc
+.venv/
+*.wav
+*.pth
+*.pt
+*.ckpt
