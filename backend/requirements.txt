@@ -1,0 +1,11 @@
+fastapi==0.110.2
+uvicorn==0.29.0
+httpx==0.27.0
+sse-starlette==1.8.2
+pydantic==2.7.1
+python-multipart==0.0.9
+snac
+soundfile
+pyttsx3
+librosa
+yt-dlp

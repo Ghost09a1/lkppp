@@ -1,0 +1,66 @@
+import base64
+from typing import Any, Dict, Optional
+
+import httpx
+
+
+class MediaRouter:
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+
+    async def tts(self, text: str, character: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if not self.config["media"].get("tts_enabled"):
+            return {"ok": False, "error": "TTS disabled or no model installed."}
+        url = f"http://127.0.0.1:{self.config['media']['tts_port']}/tts"
+        payload = {
+            "text": text,
+            "voice_style": (character or {}).get("voice_style") or "breathy-female",
+            "pitch_shift": (character or {}).get("voice_pitch_shift", 0.0),
+            "speed": (character or {}).get("voice_speed", 1.0),
+            "voice_ref_path": (character or {}).get("voice_ref_path", ""),
+            "voice_model_path": (character or {}).get("voice_model_path", ""),
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                return {"ok": True, **resp.json()}
+            except Exception as exc:
+                return {"ok": False, "error": f"TTS service unavailable: {exc}"}
+
+    async def generate_image(
+        self,
+        prompt: str,
+        negative: str = "",
+        steps: int = 20,
+        width: int = 512,
+        height: int = 768,
+    ) -> Dict[str, Any]:
+        if not self.config["media"].get("sdnext_enabled"):
+            return {"ok": False, "error": "SD.Next disabled. Enable in config."}
+        url = f"{self.config['media']['sdnext_host']}/sdapi/v1/txt2img"
+        payload = {
+            "prompt": prompt,
+            "negative_prompt": negative,
+            "steps": steps,
+            "width": width,
+            "height": height,
+            "sampler_name": "Euler a",
+        }
+        async with httpx.AsyncClient(timeout=120) as client:
+            try:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                images = data.get("images") or []
+                if not images:
+                    return {"ok": False, "error": "No images returned."}
+                return {"ok": True, "images_base64": images}
+            except Exception as exc:
+                return {"ok": False, "error": f"Image service unavailable: {exc}"}
+
+    async def generate_video(self, prompt: str) -> Dict[str, Any]:
+        if not self.config["media"].get("video_enabled"):
+            return {"ok": False, "error": "Video worker disabled in config."}
+        # Placeholder hook for future Wan2.2 integration
+        return {"ok": False, "error": "Video generation stub. Enable worker implementation."}

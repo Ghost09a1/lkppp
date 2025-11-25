@@ -1,0 +1,50 @@
+{
+    "backend_host":  "127.0.0.1",
+    "backend_port":  8000,
+    "ui_host":  "127.0.0.1",
+    "ui_port":  8000,
+    "llm":  {
+                "mode":  "gguf",
+                "llama_cpp_server":  {
+                                         "binary_path":  "bins/llama-server.exe",
+                                         "model_path":  "models/llm/MN-12B-Celeste-V1.9-Q4_K_M.gguf",
+                                         "port":  8081,
+                                         "n_ctx":  8192,
+                                         "n_threads":  12,
+                                         "gpu_layers":  0,
+                                         "batch":  128
+                                     },
+                "ollama":  {
+                               "model":  "celeste-local",
+                               "host":  "http://127.0.0.1:11434"
+                           }
+            },
+    "chat":  {
+                 "max_history":  10,
+                 "summary_every":  8
+             },
+    "paths":  {
+                  "db_path":  "outputs/chat.db",
+                  "logs_dir":  "logs",
+                  "ui_dir":  "ui"
+              },
+    "media":  {
+                  "tts_enabled":  true,
+                  "tts_model_path":  "models/tts/Orpheus-3b-German-FT-Q8_0.gguf",
+                  "tts_vocoder_path": "models/tts/WavTokenizer-Large-75-F16.gguf",
+                  "snac_model_id": "hubertsiuzdak/snac_24khz",
+                  "snac_local_path": "",
+                  "snac_device": "cpu",
+                  "vc_script": "rvc_infer.py",
+                  "vc_train_script": "vc_train_tool.py",
+                  "rvc_cli_path": ".venv/Scripts/rvc-cli.exe",
+                  "tts_port":  8020,
+                  "sdnext_enabled":  true,
+                  "sdnext_host":  "http://127.0.0.1:7860",
+                  "video_enabled":  false
+              },
+    "ui":  {
+               "open_browser":  true,
+               "dark_mode":  true
+           }
+}

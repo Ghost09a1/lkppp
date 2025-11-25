@@ -1,0 +1,82 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MyCandyLocal</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <header>
+        <h1>MyCandyLocal</h1>
+        <button id="new-character-btn">＋</button>
+      </header>
+      <div id="character-list"></div>
+    </aside>
+
+    <main class="chat-pane">
+      <div class="chat-header">
+        <div>
+          <h2 id="character-name">Select a character</h2>
+          <p id="character-desc"></p>
+        </div>
+        <div class="actions">
+          <button id="audio-btn" class="toggle off">Audio Off</button>
+          <button id="image-btn">Generate Image</button>
+        </div>
+      </div>
+      <div id="chat-window"></div>
+      <form id="chat-form">
+        <input id="chat-input" type="text" placeholder="Say something spicy..." autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </main>
+  </div>
+
+  <div id="modal" class="hidden">
+    <div class="modal-content">
+      <h3>Create Character</h3>
+      <form id="character-form">
+        <input name="name" placeholder="Name" required />
+        <textarea name="description" placeholder="Description"></textarea>
+        <input name="visual_style" placeholder="Visual style (realistic/anime)" />
+        <textarea name="appearance_notes" placeholder="Appearance notes"></textarea>
+        <textarea name="personality" placeholder="Personality traits"></textarea>
+        <textarea name="backstory" placeholder="Backstory"></textarea>
+        <input name="relationship_type" placeholder="Relationship type" />
+        <textarea name="dos" placeholder="Do's"></textarea>
+        <textarea name="donts" placeholder="Don'ts"></textarea>
+        <h4>Voice</h4>
+        <select name="language">
+          <option value="en">English</option>
+          <option value="de">Deutsch</option>
+        </select>
+        <input name="voice_style" placeholder="Voice style tags (breathy, soft, etc.)" />
+        <input name="voice_model_path" placeholder="Voice model path (RVC .pth)" />
+        <input name="voice_youtube_url" placeholder="YouTube URL (note only)" type="url" />
+        <label class="file-label">Voice sample (audio, optional)
+          <input name="voice_sample" type="file" accept="audio/*" />
+        </label>
+        <label class="file-label">Voice dataset (WAV or ZIP for training)
+          <input id="voice-dataset" type="file" accept="audio/*,.zip" />
+        </label>
+        <div class="train-row">
+          <button type="button" id="train-voice-btn">Train Voice</button>
+          <span id="train-status" class="train-status"></span>
+          <span id="train-ok" class="train-ok" style="display:none;color:lime;">→</span>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="cancel-modal">Cancel</button>
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
+
