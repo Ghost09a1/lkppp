@@ -3,15 +3,16 @@ from pathlib import Path
 from typing import Any, Dict
 import zipfile
 import threading
+import time
+import subprocess
+import shutil
 
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-import subprocess
 from sse_starlette.sse import EventSourceResponse
-import shutil
 
 from . import db
 from .llm import LLMClient
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     media_cfg = config.get("media", {})
     vc_train_script = media_cfg.get("vc_train_script", "vc_train_tool.py")
     rvc_cli_path = media_cfg.get("rvc_cli_path", "")
+    rvc_webui_dir = media_cfg.get("rvc_webui_dir", "")
 
     llm_client = LLMClient(config)
     memory = MemoryManager(conn, llm_client, config["chat"]["max_history"], config["chat"]["summary_every"])
@@ -112,16 +114,21 @@ def create_app() -> FastAPI:
         )
         conn.commit()
 
+    training_logs_dir = ROOT / "outputs" / "training"
+    training_logs_dir.mkdir(parents=True, exist_ok=True)
+
     def _run_training(char_id: int):
         raw_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
         model_out = ROOT / "models" / "vc" / f"char_{char_id}.pth"
         model_out.parent.mkdir(parents=True, exist_ok=True)
+        log_path = training_logs_dir / f"char_{char_id}.log"
         if not raw_dir.exists() or not any(raw_dir.glob("*.wav")):
             _set_training_status(char_id, "failed", "No WAV files found in dataset.")
             return
         if not Path(vc_train_script).exists():
             _set_training_status(char_id, "failed", f"Training script not found: {vc_train_script}")
             return
+
         _set_training_status(char_id, "running", "")
         cmd = [
             "python",
@@ -133,12 +140,26 @@ def create_app() -> FastAPI:
         ]
         if rvc_cli_path:
             cmd += ["--rvc_cli", str(rvc_cli_path)]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
-        if result.returncode == 0 and model_out.exists():
-            _set_training_status(char_id, "done", "", str(model_out))
-        else:
-            err = result.stderr or "Training failed"
-            _set_training_status(char_id, "failed", err)
+        if rvc_webui_dir:
+            cmd += ["--rvc_webui_dir", str(rvc_webui_dir)]
+
+        with log_path.open("w", encoding="utf-8") as lf:
+            lf.write(f"[start] {time.strftime('%Y-%m-%d %H:%M:%S')} cmd: {' '.join(cmd)}\n")
+
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            with log_path.open("a", encoding="utf-8") as lf:
+                if proc.stdout:
+                    for line in proc.stdout:
+                        lf.write(line)
+                        lf.flush()
+            proc.wait()
+            if proc.returncode == 0 and model_out.exists():
+                _set_training_status(char_id, "done", "", str(model_out))
+            else:
+                _set_training_status(char_id, "failed", f"Exit {proc.returncode}")
+        except Exception as exc:
+            _set_training_status(char_id, "failed", str(exc))
 
     @app.get("/")
     async def root():
