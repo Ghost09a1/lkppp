@@ -1,0 +1,12 @@
+INFO:     Started server process [41300]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:59584 - "GET /ui HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:59584 - "GET /ui/ HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59584 - "GET /ui/app.js HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:59584 - "GET /characters HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59585 - "POST /characters/2/voice_dataset HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59585 - "POST /characters/2/train_voice HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59585 - "GET /characters HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59603 - "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 Not Found
