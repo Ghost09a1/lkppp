@@ -41,6 +41,25 @@ try:
         kl_loss,
     )
 
+# --- PATCH: use canonical infer_pack.loss helpers with correct casing ---
+from infer_pack.loss import (
+    discriminator_loss,
+    feature_loss,
+    generator_loss,
+    kl_loss,
+)
+
+# --- END PATCH ---
+
+# --- PATCH: ModuleNotFoundError FIX (infer_pack.mel_processing -> mel_processing) ---
+from mel_processing import mel_spectrogram_torch, spec_to_mel_torch
+
+# --- END PATCH ---
+
+from process_ckpt import savee
+
+global_step = 0
+
     if hps.version == "v1":
         from infer_pack.models import (
             SynthesizerTrnMs256NSFsid as RVC_Model_f0,

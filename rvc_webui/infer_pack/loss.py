@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 from torch.nn import functional as F
 
 
@@ -39,6 +40,26 @@ def generator_loss(disc_outputs):
         loss += l
 
     return loss, gen_losses
+
+
+class DiscriminatorLoss(nn.Module):
+    """Module wrapper for discriminator_loss for compatibility with legacy imports."""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, disc_real_outputs, disc_generated_outputs):
+        return discriminator_loss(disc_real_outputs, disc_generated_outputs)
+
+
+class GeneratorLoss(nn.Module):
+    """Module wrapper for generator_loss for compatibility with legacy imports."""
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, disc_outputs):
+        return generator_loss(disc_outputs)
 
 
 def kl_loss(z_p, logs_q, m_p, logs_p, z_mask):
