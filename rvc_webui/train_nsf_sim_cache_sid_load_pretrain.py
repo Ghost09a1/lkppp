@@ -48,8 +48,13 @@ else:
         MultiPeriodDiscriminatorV2 as MultiPeriodDiscriminator,
     )
 
-# --- PATCH: ModuleNotFoundError FIX (infer_pack.losses -> losses) ---
-from losses import generator_loss, discriminator_loss, feature_loss, kl_loss
+# --- PATCH: use canonical infer_pack.loss helpers with correct casing ---
+from infer_pack.loss import (
+    discriminator_loss,
+    feature_loss,
+    generator_loss,
+    kl_loss,
+)
 
 # --- END PATCH ---
 
