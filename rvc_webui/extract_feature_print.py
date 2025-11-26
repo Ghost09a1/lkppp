@@ -16,6 +16,24 @@ import torch.nn.functional as F
 import soundfile as sf
 import numpy as np
 from fairseq import checkpoint_utils
+from fairseq.data.dictionary import Dictionary
+import torch
+
+# Allow fairseq Dictionary when loading hubert_base.pt with newer torch defaults
+torch.serialization.add_safe_globals([Dictionary])
+torch.serialization.add_safe_globals([checkpoint_utils])  # no-op but keeps parity
+torch.serialization.add_safe_globals([Dictionary.__class__])
+
+# Force torch.load to weights_only=False for this script
+_orig_torch_load = torch.load
+
+
+def _torch_load_compat(f, map_location=None, **kwargs):
+    kwargs.setdefault("weights_only", False)
+    return _orig_torch_load(f, map_location=map_location, **kwargs)
+
+
+torch.load = _torch_load_compat
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
