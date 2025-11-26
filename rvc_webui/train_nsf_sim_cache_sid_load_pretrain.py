@@ -66,7 +66,11 @@ class EpochRecorder:
 
 
 def main():
-    n_gpus = torch.cuda.device_count()
+    if torch.cuda.is_available():
+        n_gpus = torch.cuda.device_count()
+    else:
+        n_gpus = 1
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "51545"
 
