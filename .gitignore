@@ -4,6 +4,8 @@ models/
 __pycache__/
 *.pyc
 .venv/
+rvc_webui/venv/
+.vscode/
 *.wav
 *.pth
 *.pt

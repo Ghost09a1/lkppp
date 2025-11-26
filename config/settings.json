@@ -38,7 +38,7 @@
                   "vc_script": "rvc_infer.py",
                   "vc_train_script": "vc_train_tool.py",
                   "rvc_cli_path": ".venv/Scripts/rvc-cli.exe",
-                  "rvc_webui_dir": "",
+                  "rvc_webui_dir": "C:/Users/Ghost/Desktop/avo/MyCandyLocal/rvc_webui",
                   "tts_port":  8020,
                   "sdnext_enabled":  true,
                   "sdnext_host":  "http://127.0.0.1:7860",
