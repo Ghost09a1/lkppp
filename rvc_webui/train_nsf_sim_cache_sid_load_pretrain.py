@@ -102,7 +102,7 @@ def run(rank, n_gpus, hps):
     if hps.if_latest == 1: # Load latest checkpoint
         # ... (rest of loading logic) ...
         pass
-    except: # Wenn es kein resume gibt, lade pretrain
+    except Exception: # Wenn es kein resume gibt, lade pretrain
         epoch_str = 1
         global_step = 0
         if rank == 0:
