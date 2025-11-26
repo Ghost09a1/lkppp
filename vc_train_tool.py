@@ -100,6 +100,12 @@ def main():
         print(f"Stelle sicher, dass --rvc_cli auf den RVC-WebUI Repo-Root zeigt und die Installation abgeschlossen ist.", file=sys.stderr)
         sys.exit(1)
 
+    # Falls im RVC-Repo ein venv liegt, nutze dessen Python, damit die Abhängigkeiten (scipy etc.) sicher gefunden werden
+    python_cmd = "python"
+    venv_python = rvc_repo_dir / "venv" / "Scripts" / "python.exe"
+    if venv_python.exists():
+        python_cmd = str(venv_python)
+
     # ACHTUNG: Die echten RVC-Skripte verwenden oft positionelle Argumente und andere Flags als das rvc-cli!
 
     # Der Ordner, in dem die vorverarbeiteten Daten gespeichert werden (innerhalb RVC_REPO_DIR/dataset/)
@@ -107,30 +113,42 @@ def main():
 
     # 1) preprocess
     # Befehl: python trainset_preprocess_pipeline_print.py {DATASET_INPUT_DIR} {SR}
+    exp_dir = rvc_repo_dir / "logs" / model_name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+
     run_step(
         "preprocess",
-        ["python", str(PREPROCESS_SCRIPT), str(data_dir), str(args.sr)],
+        [
+            python_cmd,
+            str(PREPROCESS_SCRIPT),
+            str(data_dir),
+            str(args.sr),
+            "8",               # number of processes
+            str(exp_dir),
+            "True",            # no parallel? (script expects 'True'/'False')
+            "3.7",             # per (segment length)
+        ],
     )
 
     # 2a) extract F0 (Stimmtonhöhe)
     # Befehl: python extract_f0_print.py {DATASET_DIR} {F0_METHOD}
     run_step(
         "extract F0",
-        ["python", str(EXTRACT_F0_SCRIPT), str(dataset_dir), args.f0method],
+        [python_cmd, str(EXTRACT_F0_SCRIPT), str(dataset_dir), args.f0method],
     )
     
     # 2b) extract feature (Feature-Extraction)
     # Befehl: python extract_feature_print.py {DATASET_DIR} {RVC_MODEL_VERSION - 2 oder 3, 2 ist der default}
     run_step(
         "extract feature",
-        ["python", str(EXTRACT_FEATURE_SCRIPT), str(dataset_dir), "2"],
+        [python_cmd, str(EXTRACT_FEATURE_SCRIPT), str(dataset_dir), "2"],
     )
 
     # 3) train
     # Befehl: python train_nsf_sim_vs_print.py {MODEL_NAME} {SR} {TotalEpoch} {BatchSize} {GPU_ID (hier 0)} {SaveEpoch}
     run_step(
         "train",
-        ["python", str(TRAIN_SCRIPT), model_name, str(args.sr), 
+        [python_cmd, str(TRAIN_SCRIPT), model_name, str(args.sr), 
          str(args.epochs), str(args.batch_size), "0", "5"], # 0=GPU ID (muss bei nur einer GPU 0 sein), 5=Alle 5 Epochen speichern
     )
     
@@ -139,7 +157,7 @@ def main():
         # Befehl: python infer/modules/train/index_make.py {FEAT_OUT_DIR} {MODEL_NAME}
         run_step(
             "index",
-            ["python", str(INDEX_SCRIPT), str(dataset_dir), model_name],
+            [python_cmd, str(INDEX_SCRIPT), str(dataset_dir), model_name],
         )
     except Exception as exc:  # pragma: no cover - non-critical
         print(f"[vc_train_tool] index step failed (continuing): {exc}", file=sys.stderr)

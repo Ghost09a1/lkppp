@@ -130,6 +130,11 @@ def create_app() -> FastAPI:
             return
 
         _set_training_status(char_id, "running", "")
+        repo_path = rvc_webui_dir or rvc_cli_path
+        if not repo_path or not Path(repo_path).exists():
+            _set_training_status(char_id, "failed", "RVC repo path missing (set media.rvc_webui_dir).")
+            return
+
         cmd = [
             "python",
             str(vc_train_script),
@@ -137,11 +142,9 @@ def create_app() -> FastAPI:
             str(raw_dir),
             "--output",
             str(model_out),
+            "--rvc_cli",
+            str(repo_path),
         ]
-        if rvc_cli_path:
-            cmd += ["--rvc_cli", str(rvc_cli_path)]
-        if rvc_webui_dir:
-            cmd += ["--rvc_webui_dir", str(rvc_webui_dir)]
 
         with log_path.open("w", encoding="utf-8") as lf:
             lf.write(f"[start] {time.strftime('%Y-%m-%d %H:%M:%S')} cmd: {' '.join(cmd)}\n")
