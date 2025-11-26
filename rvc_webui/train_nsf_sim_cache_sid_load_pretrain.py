@@ -8,7 +8,7 @@ import datetime
 
 hps = utils.get_hparams()
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.gpus.replace("-", ",")
-n_gpus = len(hps.gpus.split("-"))
+# n_gpus = len(hps.gpus.split("-")) # Originale Zeile, wird in main() überschrieben/korrigiert
 from random import shuffle
 import traceback, json, argparse, itertools, math, torch, pdb
 
@@ -66,11 +66,15 @@ class EpochRecorder:
 
 
 def main():
+    # --- PATCH 1 (CPU-Nutzung in main() erzwingen) ---
     if torch.cuda.is_available():
         n_gpus = torch.cuda.device_count()
     else:
+        # Zwingt PyTorch zur CPU (n_gpus=1 überlebt die RVC-Prüfung)
         n_gpus = 1
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    # --- ENDE PATCH 1 ---
+    
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "51545"
 
@@ -104,8 +108,12 @@ def run(rank, n_gpus, hps):
         backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
     )
     torch.manual_seed(hps.train.seed)
-    if torch.cuda.is_available():
-        torch.cuda.set_device(rank)
+    
+    # --- PATCH 2: Die Zeile, die torch.cuda.set_device(rank) aufruft, MUSS hier entfernt werden, 
+    # da sie im CPU-Modus zum Absturz führt.
+    # if torch.cuda.is_available():
+    #     torch.cuda.set_device(rank)
+    # --- ENDE PATCH 2 ---
 
     if hps.if_f0 == 1:
         train_dataset = TextAudioLoaderMultiNSFsid(hps.data.training_files, hps.data)
