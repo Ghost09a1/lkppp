@@ -6,7 +6,6 @@ sys.path.append(os.path.join(now_dir, "train"))
 import utils
 import datetime
 from tqdm import tqdm
-
 # Importe zur Laufzeit
 from random import shuffle
 import traceback, json, argparse, itertools, math, torch, pdb
@@ -21,7 +20,7 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import autocast, GradScaler
-from infer_pack import commons  # Hier wurde in der Regel commons.py geladen
+from infer_pack import commons # Hier wurde in der Regel commons.py geladen
 from time import sleep
 from time import time as ttime
 from data_utils import (
@@ -167,13 +166,9 @@ def run(rank, n_gpus, hps):
             )
             epoch = 1
 
-    except (
-        Exception
-    ):  # Wenn das Laden des neuesten Checkpoints fehlschlägt, beginne mit Pretrain-Gewichten oder starte neu
-        logger.info(
-            "Failed to load latest checkpoint, trying to load pretrained weights."
-        )
-        try:  # <<<< DIESER TRY-BLOCK HATTE IN IHRER DATEI GEFEHLT
+    except Exception: # Wenn das Laden des neuesten Checkpoints fehlschlägt, beginne mit Pretrain-Gewichten oder starte neu
+        logger.info("Failed to load latest checkpoint, trying to load pretrained weights.")
+        try: # <<<< DIESER TRY-BLOCK HATTE IN IHRER DATEI GEFEHLT
             # Lade Pretrain-Gewichte für G
             logger.info("loading pretrained G...")
             _ = utils.load_pretrained_model(
@@ -184,7 +179,7 @@ def run(rank, n_gpus, hps):
             )
         except Exception:
             logger.info("Failed to load pretrained G, starting from scratch.")
-
+        
         try:
             # Lade Pretrain-Gewichte für D
             logger.info("loading pretrained D...")
@@ -196,19 +191,19 @@ def run(rank, n_gpus, hps):
             )
         except Exception:
             logger.info("Failed to load pretrained D, starting from scratch.")
-
+        
         epoch = 1
 
     # ... (Rest des Codes ab hier sollte identisch sein) ...
-
+    
     # Modelle in DDP/Modul verpacken
     if torch.cuda.is_available():
         net_g = DDP(net_g, device_ids=[rank])
         net_d = DDP(net_d, device_ids=[rank])
     else:
         # CPU-Training: DDP nur als Wrapper (keine eigentliche Verteilung)
-        net_g = net_g.module if hasattr(net_g, "module") else net_g
-        net_d = net_d.module if hasattr(net_d, "module") else net_d
+        net_g = net_g.module if hasattr(net_g, 'module') else net_g 
+        net_d = net_d.module if hasattr(net_d, 'module') else net_d
 
     # Loader
     if hps.if_f0 == 1:
@@ -223,7 +218,11 @@ def run(rank, n_gpus, hps):
         rank=rank,
         shuffle=True,
     )
-    collate_fn = TextAudioCollateMultiNSFsid() if hps.if_f0 == 1 else TextAudioCollate()
+    collate_fn = (
+        TextAudioCollateMultiNSFsid()
+        if hps.if_f0 == 1
+        else TextAudioCollate()
+    )
     train_loader = DataLoader(
         train_dataset,
         num_workers=hps.train.num_workers,
@@ -318,7 +317,9 @@ def train_and_evaluate(
         optim_d.zero_grad()
         with autocast(enabled=hps.train.fp16_run):
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(spec, spec_g.detach())
-            loss_disc, losses_disc_r, losses_disc_g = disc_loss(y_d_hat_r, y_d_hat_g)
+            loss_disc, losses_disc_r, losses_disc_g = disc_loss(
+                y_d_hat_r, y_d_hat_g
+            )
         loss_disc.backward()
         optim_d.step()
 
@@ -383,13 +384,13 @@ def train_and_evaluate(
             epoch,
             os.path.join(hps.model_dir, "D_{}.pth".format(2333333)),
         )
-
+    
     if rank == 0 and hps.save_every_weights == "1":
         if hasattr(net_g, "module"):
             ckpt = net_g.module.state_dict()
         else:
             ckpt = net_g.state_dict()
-
+        
         # NOTE: savee function is not fully defined in the provided file, so I'm simplifying the log output here
         # to prevent potential ModuleErrors if an undefined function is called.
         logger.info(
@@ -410,7 +411,12 @@ def train_and_evaluate(
             ckpt = net_g.module.state_dict()
         else:
             ckpt = net_g.state_dict()
-        logger.info("saving final ckpt:%s" % ("Saved final checkpoint",))
+        logger.info(
+            "saving final ckpt:%s"
+            % (
+                "Saved final checkpoint",
+            )
+        )
         try:
             os.remove(os.path.join(hps.model_dir, "cache.pth"))
         except:
@@ -427,7 +433,9 @@ def main():
         n_gpus = 1
         os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Set to empty string for CPU
 
-    print(f"[RVC-CPU-FIX] Starting training (n_gpus={n_gpus}).")
+    print(
+        f"[RVC-CPU-FIX] Starting training (n_gpus={n_gpus})."
+    )
     # Wenn keine GPU verfügbar ist oder nur eine GPU verwendet wird, wird kein multiprocessing verwendet.
     # Stattdessen wird die 'run'-Funktion direkt aufgerufen.
     if n_gpus == 0 or n_gpus == 1:
