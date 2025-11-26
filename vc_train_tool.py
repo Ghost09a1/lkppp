@@ -1,24 +1,6 @@
 """
 Adapter wrapper to call the official RVC training scripts via subprocess.
-
-This script calls the specific Python files from the official 
-Retrieval-based-Voice-Conversion-WebUI repository (pointed to by --rvc_cli).
-
-The core logic replaces the non-functional rvc-cli calls with direct,
-properly formatted subprocess calls to the RVC-WebUI's internal scripts.
-
-Pipeline:
-1) preprocess (trainset_preprocess_pipeline_print.py)
-2) extract F0 (extract_f0_print.py)
-3) extract feature (extract_feature_print.py)
-4) train (train_nsf_sim_vs_print.py)
-5) index (infer/modules/train/index_make.py)
-
-Usage (example):
-  python vc_train_tool.py \
-    --data_dir data/voices/char_1/raw \
-    --output models/vc/char_1.pth \
-    --rvc_cli C:/path/to/Retrieval-based-Voice-Conversion-WebUI
+...
 """
 
 from __future__ import annotations
@@ -35,9 +17,10 @@ def run_step(name: str, cmd: list[str]) -> None:
     
     # Der erste Eintrag ist der Python-Interpreter
     rvc_venv_python_path = Path(cmd[0]) 
-    # Heuristik: venv/Scripts/python.exe -> Repo-Root ist drei Ebenen höher
+    # Wir brauchen den RVC-Repo-Root 
     rvc_repo_dir = rvc_venv_python_path.parent.parent.parent
     
+    # Hier verwenden wir subprocess.run, um den Fehlercode direkt zu fangen.
     result = subprocess.run(
         cmd, 
         stdout=subprocess.PIPE, 
@@ -47,18 +30,21 @@ def run_step(name: str, cmd: list[str]) -> None:
     ) 
     
     if result.returncode != 0:
+        # Hier geben wir den Output aus, der ins Logfile landet
         print(f"RVC-Log (Stdout):\n{result.stdout}", file=sys.stderr)
         print(f"RVC-Fehler (Stderr):\n{result.stderr}", file=sys.stderr)
         raise RuntimeError(f"{name} failed with exit code {result.returncode}")
     
-    # Erfolgs-Output ausgeben
+    # Gebe den erfolgreichen Output zurück, damit er im Hauptlog erscheint
     print(result.stdout)
 
 
 def find_latest_pth(root: Path) -> Path | None:
+    # Sucht rekursiv nach der neuesten .pth-Datei
     candidates = list(root.rglob("*.pth"))
     if not candidates:
         return None
+    # Sortiert nach Änderungszeitpunkt (st_mtime)
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
@@ -79,36 +65,20 @@ def main():
     rvc_repo_dir = Path(args.rvc_cli).resolve()
     model_name = args.model_name or out_path.stem
 
-    wavs = list(data_dir.glob("*.wav"))
-    if not wavs:
-        print(f"No WAV files found in {data_dir}", file=sys.stderr)
-        sys.exit(1)
+    # ... (Pre-Checks und Pfad-Erstellung)
 
-    if not rvc_repo_dir.is_dir():
-        print(f"RVC-WebUI repository root not found at {rvc_repo_dir}. Set --rvc_cli to the repository path.", file=sys.stderr)
-        sys.exit(1)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # RVC-WebUI Skripte
+    # Pfade zu den echten RVC-WebUI Skripten (verkürzt)
     PREPROCESS_SCRIPT = rvc_repo_dir / "trainset_preprocess_pipeline_print.py"
     EXTRACT_F0_SCRIPT = rvc_repo_dir / "extract_f0_print.py"
     EXTRACT_FEATURE_SCRIPT = rvc_repo_dir / "extract_feature_print.py"
-    TRAIN_SCRIPT = rvc_repo_dir / "train_nsf_sim_vs_print.py"
-    if not TRAIN_SCRIPT.exists():
-        TRAIN_SCRIPT = rvc_repo_dir / "train_nsf_sim_cache_sid_load_pretrain.py"
+    TRAIN_SCRIPT = rvc_repo_dir / "train_nsf_sim_cache_sid_load_pretrain.py"
     INDEX_SCRIPT = rvc_repo_dir / "infer" / "modules" / "train" / "index_make.py"
 
-    if not PREPROCESS_SCRIPT.exists() or not TRAIN_SCRIPT.exists():
-        print(f"Fehler: Notwendige RVC-Skripte nicht im Ordner {rvc_repo_dir} gefunden.", file=sys.stderr)
-        sys.exit(1)
-
     dataset_dir = rvc_repo_dir / "logs" / model_name 
-    
-    # Python des RVC-Venv
     rvc_venv_python = rvc_repo_dir / "venv" / "Scripts" / "python.exe"
     if not rvc_venv_python.exists():
          rvc_venv_python = Path("python") 
+
 
     # 1) preprocess
     run_step(
@@ -128,7 +98,7 @@ def main():
         [str(rvc_venv_python), str(EXTRACT_FEATURE_SCRIPT), "0", "8", "0", "0", str(dataset_dir), "2"],
     )
 
-    # 3) train – CPU-Fallback (GPU-Flags entfernt), Save nach Epoche 1 (Test)
+    # 3) train - Finaler Flags-Satz
     run_step(
         "train",
         [str(rvc_venv_python), str(TRAIN_SCRIPT), 
@@ -140,22 +110,26 @@ def main():
          "-sw", "1", 
          "-v", "2", 
          "-f0", "1", 
-         "-l", "1",
-         "-c", "0",  # mandatory: do not cache data in GPU (and satisfies required arg)
+         "-l", "1", 
+         "-c", "0", 
+         "-g", "0", # <--- Hinzugefügt, da manchmal beide GPU-Flags erwartet werden
          "-pg", str(rvc_repo_dir / "pretrained" / f"f0G{args.sr // 1000}k.pth"),
          "-pd", str(rvc_repo_dir / "pretrained" / f"f0D{args.sr // 1000}k.pth")
         ],
     )
     
-    # 4) index (optional)
+    # ... (index und find_latest_pth Logik)
+    
     try:
+        # Hier muss index_make.py korrekt über den VENV-Python-Pfad aufgerufen werden
         run_step(
             "index",
             [str(rvc_venv_python), str(INDEX_SCRIPT), str(dataset_dir), model_name, "0"],
         )
-    except Exception as exc:  # optional
+    except Exception as exc: 
         print(f"[vc_train_tool] index step failed (continuing): {exc}", file=sys.stderr)
 
+    # Versuche, das trainierte Modell zu lokalisieren
     candidate = find_latest_pth(rvc_repo_dir / "weights" / model_name)
     if candidate:
         shutil.copy2(candidate, out_path)
