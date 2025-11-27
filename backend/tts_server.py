@@ -333,10 +333,15 @@ async def tts(req: TTSRequest):
 # Direkter Start (z.B. python backend/tts_server.py)
 # ---------------------------------------------------------
 if __name__ == "__main__":
+    import sys
     import uvicorn
 
+    # Ensure project root is importable when invoking as script
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+
     uvicorn.run(
-        "backend.tts_server:app",
+        app,
         host="127.0.0.1",
         port=tts_port,
         reload=False,
