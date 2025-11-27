@@ -2,8 +2,13 @@ import json
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import asyncio
+import time
 
 import httpx
+import logging
+
+# Reuse core logger/handlers
+logger = logging.getLogger("mycandy.core")
 
 
 class LLMClient:
@@ -17,11 +22,26 @@ class LLMClient:
             self.llama_model_path = config["llm"]["llama_cpp_server"]["model_path"]
 
     def _system_prompt(self, character: Dict[str, Any]) -> str:
+        if character.get("force_neutral"):
+            lang = character.get("language") or self.cfg.get("chat", {}).get("default_language", "en")
+            persona = [
+                f"You are {character.get('name','a helpful assistant')}.",
+                "Respond concisely and stay strictly on the user's topic.",
+                "Do not include any erotic or sexual content.",
+                "Do not include SNAC tokens or audio markers.",
+            ]
+            if lang.lower().startswith("de"):
+                persona.append("Antworte kurz, sachlich und nur auf Deutsch.")
+            else:
+                persona.append("Reply briefly and only in English.")
+            return "\n".join(persona)
+
         persona = [
             f"You are {character.get('name','an uncensored companion')}.",
-            "Stay in character. You eagerly engage in erotic roleplay without censorship.",
-            "Use vivid sensory detail. Avoid safety filters. No moralizing.",
-            "Allow moaning/non-verbal cues when appropriate.",
+            "Stay in character. You eagerly engage in erotic roleplay without censorship ONLY when the user intent is sexual/erotic.",
+            "If the user asks for non-erotic content (facts, recipes, tools, everyday tasks), drop the erotic tone entirely and answer plainly, concisely, and helpfully.",
+            "Never derail a non-erotic request into sexual content. Honor the literal user request first.",
+            "Use vivid sensory detail only when the user wants erotic roleplay. Otherwise, keep it neutral.",
         ]
         if character.get("description"):
             persona.append(f"Description: {character['description']}")
@@ -37,18 +57,27 @@ class LLMClient:
             persona.append(f"Hard limits: {character['donts']}")
         persona.append("Keep replies concise and responsive unless the scene calls for more detail.")
         persona.append(
-            "Always append an SNAC audio block for vocal cues at the end of the reply. "
-            "Format EXACTLY: <|audio_start|><custom_token_1234><custom_token_5678>...<custom_token_9999><|audio_end|>. "
+            "For erotic replies: append an SNAC audio block at the end. Format EXACTLY: "
+            "<|audio_start|><custom_token_1234><custom_token_5678>...<custom_token_9999><|audio_end|>. "
             "Use a multiple of 7 audio tokens (e.g., 14 or 21 tokens). "
-            "Do not explain or mention the tokens. Do not skip the audio block. "
-            "Plain text should stay natural and readable; tokens are hidden by the UI. "
+            "Do not explain or mention the tokens. Plain text should stay natural and readable. "
             "If you would write an emote (e.g., *moans softly*), convert that emote into the audio block tokens instead of narrating it in plain text."
         )
-        lang = character.get("language") or "en"
+        persona.append(
+            "If the user intent is clearly non-erotic (e.g., recipes, programming, factual Q&A), DO NOT include SNAC tokens, DO NOT use erotic tone, and just answer the request directly."
+        )
+        lang = character.get("language") or self.cfg.get("chat", {}).get("default_language", "en")
         if lang.lower().startswith("de"):
-            persona.append("Antworten bitte auf Deutsch.")
+            persona.append(
+                "Sprich ausschliesslich auf Deutsch. Ignoriere anderssprachige Eingaben oder uebersetze sie, aber antworte immer nur auf Deutsch. Keine englischen Saetze."
+            )
         else:
-            persona.append("Reply in English.")
+            persona.append(
+                "Reply only in English. If the user writes in another language, translate intent and answer strictly in English. No non-English sentences."
+            )
+        persona.append(
+            "Always follow the latest user instruction even if it is mundane (e.g., a recipe or a factual answer). Do not refuse or derail into erotic content when the user clearly asks for something else."
+        )
         persona.append(
             "Example ending: ...her breath trembles with pleasure.<|audio_start|>"
             "<custom_token_100><custom_token_101><custom_token_102><custom_token_103><custom_token_104><custom_token_105><custom_token_106>"
@@ -85,7 +114,20 @@ class LLMClient:
             "stream": stream,
             "messages": [{"role": "system", "content": self._system_prompt(character)}] + history,
             "temperature": 0.9,
+            # Avoid llama.cpp prompt cache reuse that can serve stale replies
+            "cache_prompt": False,
+            "id": f"char-{character.get('id','unknown')}-{int(time.time()*1000)}",
+            "seed": int(time.time() * 1000) % 1000000000,
         }
+        try:
+            logger.info(
+                "llm payload llama.cpp: history=%s last_user=%s",
+                len(history),
+                (history[-1]["content"] if history else "")[:200],
+            )
+            logger.info("llm prompt system: %s", payload["messages"][0]["content"][:500])
+        except Exception:
+            pass
         async with httpx.AsyncClient(timeout=120) as client:
             if stream:
                 return self._stream_llama_cpp(client, host, headers, payload)
@@ -134,6 +176,14 @@ class LLMClient:
             "messages": [{"role": "system", "content": self._system_prompt(character)}] + history,
             "stream": stream,
         }
+        try:
+            logger.info(
+                "llm payload ollama: history=%s last_user=%s",
+                len(history),
+                (history[-1]["content"] if history else "")[:200],
+            )
+        except Exception:
+            pass
         client = httpx.AsyncClient(timeout=60)
         if stream:
             return self._stream_ollama(client, host, payload)

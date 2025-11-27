@@ -21,7 +21,8 @@
             },
     "chat":  {
                  "max_history":  10,
-                 "summary_every":  8
+                 "summary_every":  8,
+                 "default_language": "de"
              },
     "paths":  {
                   "db_path":  "outputs/chat.db",
