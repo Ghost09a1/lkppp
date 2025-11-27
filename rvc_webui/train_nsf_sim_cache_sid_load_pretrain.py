@@ -33,7 +33,7 @@ from data_utils import (
     DistributedBucketSampler,
 )
 
-if hps.version == "v1":
+if str(hps.version) in ["v1", "1"]:
     from infer_pack.models import (
         SynthesizerTrnMs256NSFsid as RVC_Model_f0,
         SynthesizerTrnMs256NSFsid_nono as RVC_Model_nof0,
@@ -71,27 +71,35 @@ def main():
     else:
         n_gpus = 1
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "51545"
+        hps.train.fp16_run = False
 
-    children = []
-    for i in range(n_gpus):
-        subproc = mp.Process(
-            target=run,
-            args=(
-                i,
-                n_gpus,
-                hps,
-            ),
-        )
-        children.append(subproc)
-        subproc.start()
+    use_dist = torch.cuda.is_available() and n_gpus > 1
+    if use_dist:
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "51545"
 
-    for i in range(n_gpus):
-        children[i].join()
+        children = []
+        for i in range(n_gpus):
+            subproc = mp.Process(
+                target=run,
+                args=(
+                    i,
+                    n_gpus,
+                    hps,
+                    use_dist,
+                ),
+            )
+            children.append(subproc)
+            subproc.start()
+
+        for i in range(n_gpus):
+            children[i].join()
+    else:
+        # Single GPU / CPU: run in-process without DDP to avoid Gloo issues on Windows.
+        run(0, n_gpus, hps, use_dist)
 
 
-def run(rank, n_gpus, hps):
+def run(rank, n_gpus, hps, use_dist):
     global global_step
     if rank == 0:
         logger = utils.get_logger(hps.model_dir)
@@ -100,26 +108,34 @@ def run(rank, n_gpus, hps):
         writer = SummaryWriter(log_dir=hps.model_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
 
-    dist.init_process_group(
-        backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
-    )
-    torch.manual_seed(hps.train.seed)
-    if torch.cuda.is_available():
-        torch.cuda.set_device(rank)
+    if use_dist:
+        dist.init_process_group(
+            backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
+        )
+        torch.manual_seed(hps.train.seed)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(rank)
+    else:
+        torch.manual_seed(hps.train.seed)
+        if torch.cuda.is_available():
+            torch.cuda.set_device(rank)
 
     if hps.if_f0 == 1:
         train_dataset = TextAudioLoaderMultiNSFsid(hps.data.training_files, hps.data)
     else:
         train_dataset = TextAudioLoader(hps.data.training_files, hps.data)
-    train_sampler = DistributedBucketSampler(
-        train_dataset,
-        hps.train.batch_size * n_gpus,
-        # [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200,1400],  # 16s
-        [100, 200, 300, 400, 500, 600, 700, 800, 900],  # 16s
-        num_replicas=n_gpus,
-        rank=rank,
-        shuffle=True,
-    )
+    if use_dist:
+        train_sampler = DistributedBucketSampler(
+            train_dataset,
+            hps.train.batch_size * n_gpus,
+            # [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200,1400],  # 16s
+            [100, 200, 300, 400, 500, 600, 700, 800, 900],  # 16s
+            num_replicas=n_gpus,
+            rank=rank,
+            shuffle=True,
+        )
+    else:
+        train_sampler = None
     # It is possible that dataloader's workers are out of shared memory. Please try to raise your shared memory limit.
     # num_workers=8 -> num_workers=4
     if hps.if_f0 == 1:
@@ -129,10 +145,11 @@ def run(rank, n_gpus, hps):
     train_loader = DataLoader(
         train_dataset,
         num_workers=4,
-        shuffle=False,
+        shuffle=False if use_dist else True,
         pin_memory=True,
         collate_fn=collate_fn,
-        batch_sampler=train_sampler,
+        batch_sampler=train_sampler if use_dist else None,
+        batch_size=None if use_dist else hps.train.batch_size,
         persistent_workers=True,
         prefetch_factor=8,
     )
@@ -170,12 +187,13 @@ def run(rank, n_gpus, hps):
     )
     # net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
     # net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
-    if torch.cuda.is_available():
-        net_g = DDP(net_g, device_ids=[rank])
-        net_d = DDP(net_d, device_ids=[rank])
-    else:
-        net_g = DDP(net_g)
-        net_d = DDP(net_d)
+    if use_dist:
+        if torch.cuda.is_available():
+            net_g = DDP(net_g, device_ids=[rank])
+            net_d = DDP(net_d, device_ids=[rank])
+        else:
+            net_g = DDP(net_g)
+            net_d = DDP(net_d)
 
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
@@ -190,22 +208,34 @@ def run(rank, n_gpus, hps):
         global_step = (epoch_str - 1) * len(train_loader)
         # epoch_str = 1
         # global_step = 0
-    except:  # 如果首次不能加载，加载pretrain
+    except:  # ??'?zo??-??????????S??????O?S????pretrain
         # traceback.print_exc()
         epoch_str = 1
         global_step = 0
         if rank == 0:
             logger.info("loaded pretrained %s %s" % (hps.pretrainG, hps.pretrainD))
-        print(
-            net_g.module.load_state_dict(
-                torch.load(hps.pretrainG, map_location="cpu")["model"]
+        target_g = net_g.module if hasattr(net_g, "module") else net_g
+        target_d = net_d.module if hasattr(net_d, "module") else net_d
+        try:
+            print(
+                target_g.load_state_dict(
+                    torch.load(hps.pretrainG, map_location="cpu")["model"],
+                    strict=False,
+                )
+            )  ##??<??????S??????~?O-?T?
+        except RuntimeError as err:
+            if rank == 0:
+                logger.info(f"skipping pretrainG load due to shape mismatch: {err}")
+        try:
+            print(
+                target_d.load_state_dict(
+                    torch.load(hps.pretrainD, map_location="cpu")["model"],
+                    strict=False,
+                )
             )
-        )  ##测试不加载优化器
-        print(
-            net_d.module.load_state_dict(
-                torch.load(hps.pretrainD, map_location="cpu")["model"]
-            )
-        )
+        except RuntimeError as err:
+            if rank == 0:
+                logger.info(f"skipping pretrainD load due to shape mismatch: {err}")
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2
@@ -231,6 +261,7 @@ def run(rank, n_gpus, hps):
                 logger,
                 [writer, writer_eval],
                 cache,
+                use_dist,
             )
         else:
             train_and_evaluate(
@@ -245,13 +276,25 @@ def run(rank, n_gpus, hps):
                 None,
                 None,
                 cache,
+                use_dist,
             )
         scheduler_g.step()
         scheduler_d.step()
 
 
 def train_and_evaluate(
-    rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers, cache
+    rank,
+    epoch,
+    hps,
+    nets,
+    optims,
+    schedulers,
+    scaler,
+    loaders,
+    logger,
+    writers,
+    cache,
+    use_dist,
 ):
     net_g, net_d = nets
     optim_g, optim_d = optims
@@ -259,7 +302,8 @@ def train_and_evaluate(
     if writers is not None:
         writer, writer_eval = writers
 
-    train_loader.batch_sampler.set_epoch(epoch)
+    if use_dist and hasattr(train_loader.batch_sampler, "set_epoch"):
+        train_loader.batch_sampler.set_epoch(epoch)
     global global_step
 
     net_g.train()
