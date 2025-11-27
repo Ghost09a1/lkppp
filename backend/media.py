@@ -21,7 +21,7 @@ class MediaRouter:
             "voice_ref_path": (character or {}).get("voice_ref_path", ""),
             "voice_model_path": (character or {}).get("voice_model_path", ""),
         }
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             try:
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()

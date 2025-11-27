@@ -146,21 +146,26 @@ def _wav_bytes_from_numpy(wav_np):
 
 
 def _synth_pyttsx3(text: str) -> bytes:
+    """
+    Synthesize via pyttsx3 per request (fresh engine to avoid hangs).
+    """
     if pyttsx3 is None:
         raise RuntimeError("pyttsx3 not available; install via `pip install pyttsx3 pypiwin32`")
-    global TTS_ENGINE
-    if TTS_ENGINE is None:
-        TTS_ENGINE = pyttsx3.init()
-        TTS_ENGINE.setProperty("rate", 170)
+    engine = pyttsx3.init()
+    engine.setProperty("rate", 170)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
         out_path = tmp.name
     try:
-        TTS_ENGINE.save_to_file(text, out_path)
-        TTS_ENGINE.runAndWait()
+        engine.save_to_file(text, out_path)
+        engine.runAndWait()
         data = Path(out_path).read_bytes()
     finally:
         try:
             Path(out_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            engine.stop()
         except Exception:
             pass
     return data
