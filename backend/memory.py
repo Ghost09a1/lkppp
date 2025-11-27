@@ -12,10 +12,16 @@ class MemoryManager:
 
     def get_context(self, character_id: int) -> List[Dict[str, str]]:
         rows = db.get_recent_messages(self.conn, character_id, self.max_history)
-        messages = [{"role": role, "content": content} for role, content in rows]
-        latest_summary = db.get_latest_summary(self.conn, character_id)
-        if latest_summary:
-            messages.insert(0, {"role": "system", "content": f"Long-term memory:\n{latest_summary}"})
+        # Filter out old fallback/error messages so they don't pollute context
+        def _keep(role_content: Tuple[str, str]) -> bool:
+            role, content = role_content
+            if not content:
+                return False
+            if content.startswith("LLM unavailable. Ensure llama.cpp server or Ollama is running locally."):
+                return False
+            return True
+
+        messages = [{"role": role, "content": content} for role, content in rows if _keep((role, content))]
         return messages
 
     def add_message(self, character_id: int, role: str, content: str) -> None:

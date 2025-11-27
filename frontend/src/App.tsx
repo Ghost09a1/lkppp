@@ -21,7 +21,11 @@ const customTokenRegex = /<custom_token_\d+>/gi;
 
 const cleanReplyText = (raw: string | undefined | null) => {
   if (!raw) return "";
-  return raw.replace(audioMarkersRegex, "").replace(customTokenRegex, "").replace(/\s{2,}/g, " ").trim();
+  return raw
+    .replace(audioMarkersRegex, "")
+    .replace(customTokenRegex, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 };
 
 type TrainingStatus = "" | "queued" | "running" | "done" | "failed";
@@ -340,6 +344,7 @@ function App() {
         message: userMsg.text,
       });
       const reply = res.data?.reply || "LLM did not respond.";
+      const ttsText = res.data?.reply_tts || reply;
       const displayReply = cleanReplyText(reply);
       const aiMsg: Message = {
         id: Date.now() + 1,
@@ -349,29 +354,37 @@ function App() {
       setMessages((prev) => [...prev, aiMsg]);
 
       if (autoTts && reply) {
-        try {
-          const tts = await axios.post(`${API_URL}/tts`, {
-            message: reply,
-            character_id: selectedCharId,
-          });
-          if (tts.data?.audio_base64) {
-            const url = `data:audio/wav;base64,${tts.data.audio_base64}`;
-            const audio = new Audio(url);
-            audioRef.current = audio;
-            audio.onloadedmetadata = () => {
-              setMessages((prev) =>
-                prev.map((m) => (m.id === aiMsg.id ? { ...m, duration: audio.duration } : m))
-              );
-            };
-            if (autoTts) {
-              audio.play().catch((err) => console.warn("Autoplay failed", err));
-            }
+        // Prefer inline audio from chat response; fallback to separate /tts call
+        const inlineB64 = res.data?.audio_base64 as string | undefined;
+        const playFromBase64 = (b64: string) => {
+          const url = `data:audio/wav;base64,${b64}`;
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onloadedmetadata = () => {
             setMessages((prev) =>
-              prev.map((m) => (m.id === aiMsg.id ? { ...m, audioUrl: url } : m))
+              prev.map((m) => (m.id === aiMsg.id ? { ...m, duration: audio.duration } : m))
             );
+          };
+          if (autoTts) {
+            audio.play().catch((err) => console.warn("Autoplay failed", err));
           }
-        } catch (err) {
-          console.error("TTS failed", err);
+          setMessages((prev) => prev.map((m) => (m.id === aiMsg.id ? { ...m, audioUrl: url } : m)));
+        };
+
+        if (inlineB64) {
+          playFromBase64(inlineB64);
+        } else {
+          try {
+            const tts = await axios.post(`${API_URL}/tts`, {
+              message: ttsText,
+              character_id: selectedCharId,
+            });
+            if (tts.data?.audio_base64) {
+              playFromBase64(tts.data.audio_base64);
+            }
+          } catch (err) {
+            console.error("TTS failed", err);
+          }
         }
       }
     } catch (error) {
