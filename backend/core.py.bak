@@ -500,7 +500,6 @@ def create_app() -> FastAPI:
 
         # Accept message from JSON body or form field
         user_text = ((payload.message if payload else "") or message or "").strip()
-        raw_user_text = user_text
         transcript: str | None = None
 
         # Fallback: if still empty, try raw JSON body
@@ -520,6 +519,11 @@ def create_app() -> FastAPI:
 
         if not user_text and audio is None:
             raise HTTPException(status_code=400, detail="Empty message.")
+
+        # Enforce language hint into the user text to steer the model
+        lang_pref = (character.get("language") or "").strip().lower() or media.config.get("media", {}).get("whisper_language", "")
+        if lang_pref.startswith("de"):
+            user_text = f"[Bitte auf Deutsch antworten] {user_text}"
 
         # Handle optional audio -> save and transcribe (best-effort)
         if audio is not None:
@@ -547,34 +551,36 @@ def create_app() -> FastAPI:
             if not lang_pref:
                 lang_pref = media.config.get("media", {}).get("whisper_language", "")
 
-            # audio present: always prefer transcript
-            transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
+            if not user_text:
+                transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
+                user_text = transcript or "(audio received)"
+            else:
+                # audio present and text provided: keep a copy for transparency
+                transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
             logger.info("chat stt transcript_len=%s", len(transcript or ""))
             if not transcript or not transcript.strip():
                 user_text = "(audio not recognized)"
-            else:
-                user_text = transcript.strip()
-                raw_user_text = transcript.strip()
-
-        # Enforce language hint into the user text to steer the model
-        lang_pref = (character.get("language") or "").strip().lower() or media.config.get("media", {}).get("whisper_language", "")
-        if lang_pref.startswith("de"):
-            user_text = f"[Bitte auf Deutsch antworten] {user_text}"
-        else:
-            user_text = f"[Please reply in English] {user_text}"
 
         memory.add_message(char_id, "user", user_text)
-        # DEBUG: send only latest user to avoid stale history contamination
-        history = [{"role": "user", "content": user_text}]
-        # Cache buster to avoid prompt-cache reuse in llama.cpp
-        import time as _time
-        history.insert(0, {"role": "system", "content": f"turn_id:{int(_time.time()*1000)}"})
-        logger.info("chat llm input char=%s history=%s last_user=%s", char_id, len(history), (user_text or "")[:500])
+        history = memory.get_context(char_id)
+        history.append({"role": "user", "content": user_text})
+        # If intent is clearly non-erotic, inject a system override to keep replies on-topic and non-sexual
+        if _is_non_erotic_intent(user_text):
+            history.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": (
+                        "User intent ist nicht erotisch (z.B. Rezept, Code, Fakten). "
+                        "Antworte sachlich, kurz und ohne erotischen Ton. "
+                        "Kein SNAC/Audio-Block anhängen."
+                    ),
+                },
+            )
         fallback_msg = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
         reply = None
         # retry loop to avoid showing fallback when the model is still warming up
         for attempt in range(3):
-            logger.info("llm call attempt=%s char=%s user='%s' history_len=%s", attempt, char_id, (user_text or "")[:200], len(history))
             reply = await llm_client.generate_chat(character, history, stream=False)
             if reply and reply != fallback_msg:
                 break

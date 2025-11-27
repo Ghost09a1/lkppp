@@ -91,7 +91,7 @@ const emptyForm: CharacterFormState = {
   donts: "",
   voice_style: "",
   voice_youtube_url: "",
-  language: "en",
+  language: "de",
 };
 
 function statusTone(status: TrainingStatus) {
@@ -398,7 +398,7 @@ function App() {
       let res;
       if (audioFile) {
         const fd = new FormData();
-        // send empty text so backend transcribes the audio; UI shows placeholder
+        // do NOT send empty message; let backend use transcript only
         fd.append("message", "");
         fd.append("audio", audioFile);
         res = await axios.post(`${API_URL}/chat/${selectedCharId}`, fd);
