@@ -195,6 +195,8 @@ def create_app() -> FastAPI:
     db_path = str((ROOT / config["paths"]["db_path"]).resolve())
     db.init_db(db_path)
     conn = db.connect(db_path)
+    avatars_dir = ROOT / "outputs" / "avatars"
+    avatars_dir.mkdir(parents=True, exist_ok=True)
     media_cfg = config.get("media", {})
     vc_train_script = media_cfg.get("vc_train_script", "vc_train_tool.py")
     rvc_cli_path = media_cfg.get("rvc_cli_path", "")
@@ -214,6 +216,7 @@ def create_app() -> FastAPI:
 
     ui_dir = ROOT / config["paths"]["ui_dir"]
     app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+    app.mount("/avatars", StaticFiles(directory=str(avatars_dir), html=False), name="avatars")
 
     def _first_wav_in_raw(char_id: int) -> str:
         raw_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
@@ -221,6 +224,32 @@ def create_app() -> FastAPI:
             return ""
         candidates = sorted(raw_dir.glob("*.wav"))
         return str(candidates[0]) if candidates else ""
+
+    def _save_avatar_file(char_id: int, upload: UploadFile, prev_path: str | None = None) -> str:
+        # remove old avatar if present
+        if prev_path:
+            old = avatars_dir / prev_path
+            if old.exists():
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+
+        # enforce png output; unique filename to avoid cache
+        filename = f"char_{char_id}_{int(time.time())}.png"
+        out_path = avatars_dir / filename
+        data = upload.file.read()
+        try:
+            from PIL import Image  # type: ignore
+            import io
+
+            img = Image.open(io.BytesIO(data)).convert("RGBA")
+            img = img.resize((100, 100))
+            img.save(out_path, format="PNG")
+        except Exception:
+            # fallback: just write raw bytes
+            out_path.write_bytes(data)
+        return filename
 
     def _set_training_status(char_id: int, status: str, error: str = "", model_path: str = ""):
         cur = conn.cursor()
@@ -484,6 +513,20 @@ def create_app() -> FastAPI:
     @app.post("/api/characters/{char_id}/voice_sample")
     async def upload_voice_sample_api(char_id: int, file: bytes = None):
         return await upload_voice_sample(char_id, file)
+
+    @app.post("/characters/{char_id}/avatar")
+    async def upload_avatar(char_id: int, file: UploadFile = File(...)):
+        character = db.get_character(conn, char_id)
+        if not character:
+            raise HTTPException(status_code=404, detail="Character not found")
+        if file.content_type not in ("image/png", "image/jpeg", "image/jpg"):
+            raise HTTPException(status_code=400, detail="Only PNG/JPEG images are allowed")
+        prev = character.get("avatar_path") or None
+        filename = _save_avatar_file(char_id, file, prev_path=prev)
+        cur = conn.cursor()
+        cur.execute("UPDATE characters SET avatar_path = ? WHERE id = ?", (filename, char_id))
+        conn.commit()
+        return {"ok": True, "avatar_path": filename, "url": f"/avatars/{filename}"}
 
     @app.post("/characters/{char_id}/voice_sample_url")
     async def upload_voice_sample_url(char_id: int, payload: Dict[str, str]):

@@ -43,6 +43,7 @@ interface Message {
 interface Character {
   id: number;
   name: string;
+  avatar_path?: string;
   description?: string;
   visual_style?: string;
   appearance_notes?: string;
@@ -108,11 +109,19 @@ function statusTone(status: TrainingStatus) {
   }
 }
 
+const baseConversation: Message[] = [
+  { id: 1, sender: "ai", text: "Hey! I am ready. What should we explore?" },
+];
+
+const avatarUrl = (char: Character | null) => {
+  if (!char?.avatar_path) return "";
+  const base = API_URL.replace(/\/$/, "");
+  return `${base}/avatars/${char.avatar_path}`;
+};
+
 function App() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 1, sender: "ai", text: "Hey! I am ready. What should we explore?" },
-  ]);
+  const [messages, setMessages] = useState<Message[]>(baseConversation);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selectedCharId, setSelectedCharId] = useState<number | null>(null);
   const [autoTts, setAutoTts] = useState(true);
@@ -121,6 +130,7 @@ function App() {
   const [showEditor, setShowEditor] = useState(false);
   const [form, setForm] = useState<CharacterFormState>(emptyForm);
   const [voiceFile, setVoiceFile] = useState<File | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [isSavingChar, setIsSavingChar] = useState(false);
 
   const [showImageModal, setShowImageModal] = useState(false);
@@ -141,6 +151,14 @@ function App() {
     () => characters.find((c) => c.id === selectedCharId) || null,
     [characters, selectedCharId]
   );
+
+  // Reset conversation when switching characters so each has a fresh chat
+  useEffect(() => {
+    if (selectedCharId !== null) {
+      setMessages(baseConversation);
+      setInput("");
+    }
+  }, [selectedCharId]);
 
   const fetchCharacters = useCallback(async () => {
     try {
@@ -233,6 +251,7 @@ function App() {
       setTrainProgress(0);
     }
     setVoiceFile(null);
+    setAvatarFile(null);
     setShowEditor(true);
   };
 
@@ -256,8 +275,16 @@ function App() {
         fd.append("file", voiceFile);
         await axios.post(`${API_URL}/characters/${id}/voice_dataset`, fd);
       }
+      if (id && avatarFile) {
+        const fd = new FormData();
+        fd.append("file", avatarFile);
+        await axios.post(`${API_URL}/characters/${id}/avatar`, fd);
+      }
       await fetchCharacters();
-      if (id) setSelectedCharId(id);
+      if (id) {
+        setSelectedCharId(id);
+        setMessages(baseConversation);
+      }
       setShowEditor(false);
       setVoiceFile(null);
     } catch (err: any) {
@@ -428,14 +455,18 @@ function App() {
               }`}
               onClick={() => setSelectedCharId(char.id)}
             >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden">
-                    <User size={20} />
-                  </div>
-                  <div className="text-left">
-                    <div className="font-medium">{char.name}</div>
-                    <div className="text-xs text-gray-400">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden">
+                      {char.avatar_path ? (
+                        <img src={avatarUrl(char)} alt={char.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <User size={20} />
+                      )}
+                    </div>
+                    <div className="text-left">
+                      <div className="font-medium">{char.name}</div>
+                      <div className="text-xs text-gray-400">
                       {char.voice_model_path ? "RVC ready" : "No model yet"}
                     </div>
                   </div>
@@ -742,6 +773,19 @@ function App() {
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-400">Avatar (100x100)</label>
+                    <div className="border border-dashed border-gray-700 rounded-lg p-3 bg-gray-800/50">
+                      <input
+                        type="file"
+                        accept=".png,.jpg,.jpeg,image/*"
+                        onChange={(e) => setAvatarFile(e.target.files?.[0] || null)}
+                        className="w-full text-sm text-gray-300"
+                      />
+                      <div className="text-[11px] text-gray-500 mt-1">Square image, will be resized to 100x100.</div>
+                      {avatarFile && <div className="text-xs text-gray-300 mt-1">{avatarFile.name}</div>}
+                    </div>
+                  </div>
                   <div>
                     <label className="text-xs text-gray-400">Voice sample (mp3/wav/zip)</label>
                     <div className="border border-dashed border-gray-700 rounded-lg p-3 bg-gray-800/50">
