@@ -4,6 +4,7 @@ import {
   Send,
   Mic,
   Play,
+  Square,
   Volume2,
   VolumeX,
   User,
@@ -134,6 +135,7 @@ function App() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingId, setPlayingId] = useState<number | null>(null);
 
   const selectedCharacter = useMemo(
     () => characters.find((c) => c.id === selectedCharId) || null,
@@ -360,6 +362,7 @@ function App() {
           const url = `data:audio/wav;base64,${b64}`;
           const audio = new Audio(url);
           audioRef.current = audio;
+          setPlayingId(aiMsg.id);
           audio.onloadedmetadata = () => {
             setMessages((prev) =>
               prev.map((m) => (m.id === aiMsg.id ? { ...m, duration: audio.duration } : m))
@@ -520,15 +523,31 @@ function App() {
                       onClick={() => {
                         if (audioRef.current) {
                           audioRef.current.pause();
-                          audioRef.current = null;
+                          audioRef.current.currentTime = 0;
                         }
                         const audio = new Audio(msg.audioUrl!);
                         audioRef.current = audio;
+                        setPlayingId(msg.id);
+                        audio.onended = () => setPlayingId(null);
                         audio.play().catch((err) => console.warn("play failed", err));
                       }}
                       className="p-2 bg-pink-500 rounded-full hover:scale-105 transition"
                     >
                       <Play size={12} fill="currentColor" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (audioRef.current) {
+                          audioRef.current.pause();
+                          audioRef.current.currentTime = 0;
+                        }
+                        setPlayingId(null);
+                      }}
+                      className="p-2 bg-gray-600 rounded-full hover:scale-105 transition disabled:opacity-50"
+                      disabled={playingId !== msg.id}
+                      title="Stop"
+                    >
+                      <Square size={12} />
                     </button>
                     <div className="h-1 flex-1 bg-gray-600 rounded-full overflow-hidden">
                       <div className="h-full w-full bg-pink-400 animate-pulse" />
