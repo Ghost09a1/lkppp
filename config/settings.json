@@ -37,7 +37,7 @@
                   "snac_device": "cpu",
                   "vc_script": "rvc_infer.py",
                   "vc_train_script": "vc_train_tool.py",
-                  "rvc_cli_path": ".venv/Scripts/rvc-cli.exe",
+                  "rvc_cli_path": "rvc_webui/infer-web.py",
                   "rvc_webui_dir": "C:/Users/Ghost/Desktop/avo/MyCandyLocal/rvc_webui",
                   "tts_port":  8020,
                   "sdnext_enabled":  true,
