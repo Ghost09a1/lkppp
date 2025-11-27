@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
@@ -64,3 +65,30 @@ class MediaRouter:
             return {"ok": False, "error": "Video worker disabled in config."}
         # Placeholder hook for future Wan2.2 integration
         return {"ok": False, "error": "Video generation stub. Enable worker implementation."}
+
+    async def transcribe_audio(self, audio_path: Path | str) -> Optional[str]:
+        """
+        Best-effort transcription. Tries faster-whisper or whisper; returns None on failure.
+        """
+        try:
+            from faster_whisper import WhisperModel  # type: ignore
+        except Exception:
+            WhisperModel = None  # type: ignore
+
+        if WhisperModel is not None:
+            try:
+                model_size = self.config.get("media", {}).get("whisper_model", "small")
+                model = WhisperModel(model_size, device="cpu", compute_type="int8")
+                segments, _ = model.transcribe(str(audio_path), beam_size=1)
+                text = "".join(seg.text for seg in segments)
+                return text.strip()
+            except Exception:
+                return None
+        try:
+            import whisper  # type: ignore
+
+            model = whisper.load_model("small")
+            result = model.transcribe(str(audio_path))
+            return (result.get("text") or "").strip()
+        except Exception:
+            return None
