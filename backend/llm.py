@@ -55,6 +55,9 @@ class LLMClient:
             "<custom_token_120><custom_token_121><custom_token_122><custom_token_123><custom_token_124><custom_token_125><custom_token_126>"
             "<|audio_end|>"
         )
+        persona.append("Do NOT repeat earlier conversation or long-term memory verbatim. Respond only to the latest user message.")
+        persona.append("Speak like a person in plain sentences. No stage directions, no asterisks, no narration of actions. Just say the spoken line.")
+        persona.append("Keep replies to one short paragraph unless explicitly asked for more. Avoid monologues and repetition.")
         return "\n".join(persona)
 
     async def generate_chat(

@@ -6,6 +6,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+import logging
 
 import numpy as np
 from fastapi import FastAPI, File, UploadFile
@@ -38,6 +39,15 @@ except Exception:  # pragma: no cover - optional dependency
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS_PATH = ROOT / "config" / "settings.json"
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger("mycandy.tts")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(LOG_DIR / "tts_app.log", encoding="utf-8")
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
 
 with SETTINGS_PATH.open("r", encoding="utf-8") as f:
     settings = json.load(f)
@@ -239,6 +249,7 @@ async def tts(req: TTSRequest):
     text = (req.text or "").strip() if req.text else ""
     if not text:
         return TTSResponse(ok=False, error="Empty text")
+    logger.info("tts recv len=%s has_tokens=%s", len(text), bool(extract_audio_token_ids and extract_audio_token_ids(text)))
 
     token_ids = extract_audio_token_ids(text) if extract_audio_token_ids else []
 
@@ -256,6 +267,7 @@ async def tts(req: TTSRequest):
             wav_bytes = _apply_pitch_speed(wav_bytes, pitch, speed)
             wav_bytes = _maybe_convert_voice(wav_bytes, voice_ref, voice_model_path)
             b64 = base64.b64encode(wav_bytes).decode("ascii")
+            logger.info("tts snac ok len=%s", len(b64))
             return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
         except Exception as exc:
             snac_error = f"SNAC decode failed: {exc}"
@@ -272,6 +284,7 @@ async def tts(req: TTSRequest):
             wav_bytes = _apply_pitch_speed(wav_bytes, pitch, speed)
             wav_bytes = _maybe_convert_voice(wav_bytes, voice_ref, voice_model_path)
             b64 = base64.b64encode(wav_bytes).decode("ascii")
+            logger.info("tts pyttsx3 ok len=%s", len(b64))
             return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
         except Exception:
             pass
@@ -325,6 +338,7 @@ async def tts(req: TTSRequest):
         data = _apply_pitch_speed(data, pitch, speed)
         data = _maybe_convert_voice(data, voice_ref, voice_model_path)
         b64 = base64.b64encode(data).decode("ascii")
+        logger.info("tts llama-tts ok len=%s", len(b64))
 
     return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
 

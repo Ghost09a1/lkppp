@@ -1,4 +1,5 @@
 import json
+import asyncio
 from pathlib import Path
 from typing import Any, Dict
 import zipfile
@@ -6,8 +7,9 @@ import threading
 import time
 import subprocess
 import shutil
+import logging
 
-from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,11 +23,98 @@ from .media import MediaRouter
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "settings.json"
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger("mycandy.core")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(LOG_DIR / "backend_app.log", encoding="utf-8")
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
 
 
 def load_config() -> Dict[str, Any]:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _clean_tts_text(text: str) -> str:
+    """
+    Prepare text for TTS:
+    - strip audio markers
+    - keep custom_token_* so the TTS backend can synthesize non-verbal sounds
+    - skip emote text unless it contains custom_token_* (in which case keep those tokens)
+    """
+    import re
+
+    without_markers = re.sub(r"<\|audio_start\|>|<\|audio_end\|>", "", text, flags=re.IGNORECASE)
+
+    parts: list[str] = []
+    last = 0
+    # Preserve custom tokens from emotes; drop non-token emote text
+    for match in re.finditer(r"\*(.*?)\*", without_markers):
+        # text before emote
+        parts.append(without_markers[last : match.start()])
+        emote_body = match.group(1)
+        tokens = re.findall(r"<custom_token_\d+>", emote_body, flags=re.IGNORECASE)
+        if tokens:
+            parts.append(" ".join(tokens))
+        last = match.end()
+    # tail after last emote
+    parts.append(without_markers[last:])
+
+    cleaned = "".join(parts)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned.strip().strip('"').strip("'")
+
+
+def _dedupe_reply(text: str) -> str:
+    """
+    Remove common duplication patterns the model sometimes returns:
+    - drop content after the first ``` fence (often a full repeat)
+    - collapse consecutive identical paragraphs/lines
+    - limit repeated sentences and overall length for TTS sanity
+    """
+    import re
+
+    if not text:
+        return ""
+
+    # Drop repeated block after ``` if present
+    if "```" in text:
+        head = text.split("```", 1)[0].strip()
+        if head:
+            text = head
+
+    # Collapse consecutive identical lines/paragraphs
+    parts = [p.strip() for p in text.split("\n") if p.strip()]
+    deduped_lines: list[str] = []
+    for p in parts:
+        if deduped_lines and p == deduped_lines[-1]:
+            continue
+        deduped_lines.append(p)
+    text = "\n".join(deduped_lines)
+
+    # Limit repeated sentences: allow max 2 occurrences of the same sentence
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    seen_counts: dict[str, int] = {}
+    kept: list[str] = []
+    for s in sentences:
+        key = s.strip()
+        if not key:
+            continue
+        seen_counts[key] = seen_counts.get(key, 0) + 1
+        if seen_counts[key] <= 2:
+            kept.append(key)
+    text = " ".join(kept)
+
+    # Hard cap length to avoid runaway repeats
+    max_chars = 1600
+    if len(text) > max_chars:
+        text = text[:max_chars].rsplit(" ", 1)[0] + " ..."
+
+    return text.strip()
 
 
 def _convert_to_wav(src: Path) -> Path | None:
@@ -250,6 +339,7 @@ def create_app() -> FastAPI:
     @app.post("/chat/{char_id}")
     async def chat(
         char_id: int,
+        request: Request,
         payload: ChatPayload | None = Body(None),
         message: str = Form(""),
         audio: UploadFile | None = File(None),
@@ -259,7 +349,25 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Character not found")
 
         # Accept message from JSON body or form field
-        user_text = (payload.message if payload else "") or message or ""
+        user_text = ((payload.message if payload else "") or message or "").strip()
+
+        # Fallback: if still empty, try raw JSON body
+        if not user_text:
+            try:
+                raw = await request.body()
+                if raw:
+                    import json as _json
+
+                    data = _json.loads(raw)
+                    if isinstance(data, dict):
+                        user_text = str(data.get("message", "") or data.get("text", "") or "").strip()
+            except Exception:
+                pass
+
+        logger.info("chat recv char=%s len=%s audio=%s", char_id, len(user_text), bool(audio))
+
+        if not user_text and audio is None:
+            raise HTTPException(status_code=400, detail="Empty message.")
 
         # Handle optional audio -> save and transcribe (best-effort)
         if audio is not None:
@@ -276,16 +384,43 @@ def create_app() -> FastAPI:
         memory.add_message(char_id, "user", user_text)
         history = memory.get_context(char_id)
         history.append({"role": "user", "content": user_text})
-        reply = await llm_client.generate_chat(character, history, stream=False)
-        if reply is None:
-            print("[chat] LLM returned None")
-            reply = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
+        fallback_msg = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
+        reply = None
+        # retry loop to avoid showing fallback when the model is still warming up
+        for attempt in range(3):
+            reply = await llm_client.generate_chat(character, history, stream=False)
+            if reply and reply != fallback_msg:
+                break
+            await asyncio.sleep(0.8)
+
+        if reply is None or reply == fallback_msg:
+            print("[chat] LLM returned None or fallback")
+            reply = fallback_msg
         else:
+            reply = _dedupe_reply(reply)
             preview = (reply[:120] + "...") if len(reply) > 120 else reply
             print(f"[chat] reply ok (len={len(reply)}) for char {char_id}: {preview}")
-        memory.add_message(char_id, "assistant", reply)
+            logger.info("chat reply char=%s len=%s", char_id, len(reply))
+        # Avoid polluting history with fallback error text
+        if reply != fallback_msg:
+            memory.add_message(char_id, "assistant", reply)
         await memory.maybe_summarize(char_id)
-        return {"reply": reply}
+        # TTS uses cleaned text to avoid reading asterisks/markup
+        tts_text = _clean_tts_text(reply)
+        logger.info("chat tts_text_len=%s", len(tts_text))
+
+        audio_b64: str | None = None
+        try:
+            tts_result = await media.tts(tts_text, character)
+            if tts_result.get("ok") and tts_result.get("audio_base64"):
+                audio_b64 = tts_result.get("audio_base64")
+                logger.info("chat tts inline ok len=%s", len(audio_b64))
+            else:
+                logger.warning("chat tts inline failed: %s", tts_result.get("error"))
+        except Exception as exc:
+            logger.warning("chat tts inline exception: %s", exc)
+
+        return {"reply": reply, "reply_tts": tts_text, "audio_base64": audio_b64}
     @app.post("/api/chat/{char_id}")
     async def chat_api(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
         return await chat(char_id, payload, message, audio)

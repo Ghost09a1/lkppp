@@ -56,7 +56,7 @@ def start_llama_server(cfg: dict, logs_dir: Path) -> Optional[subprocess.Popen]:
         cmd += ["-ngl", str(cfg["llm"]["llama_cpp_server"]["gpu_layers"])]
     log_file = logs_dir / "llama_cpp.log"
     print(f"[launcher] starting llama.cpp server on port {port}")
-    return subprocess.Popen(cmd, stdout=log_file.open("w"), stderr=subprocess.STDOUT)
+    return subprocess.Popen(cmd, stdout=log_file.open("a", encoding="utf-8"), stderr=subprocess.STDOUT)
 
 
 def start_uvicorn(
@@ -74,7 +74,7 @@ def start_uvicorn(
         str(port),
     ]
     print(f"[launcher] starting {name} on {host}:{port}")
-    return subprocess.Popen(cmd, stdout=log_file.open("w"), stderr=subprocess.STDOUT)
+    return subprocess.Popen(cmd, stdout=log_file.open("a", encoding="utf-8"), stderr=subprocess.STDOUT)
 
 
 def main():
