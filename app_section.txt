@@ -1,0 +1,540 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import axios from "axios";
+import {
+  Send,
+  Mic,
+  Play,
+  Square,
+  Volume2,
+  VolumeX,
+  User,
+  Settings,
+  PlusCircle,
+  Image as ImageIcon,
+  CheckCircle,
+  AlertTriangle,
+  Loader2,
+} from "lucide-react";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const audioMarkersRegex = /<\|audio_start\|>|<\|audio_end\|>/gi;
+const customTokenRegex = /<custom_token_\d+>/gi;
+
+const cleanReplyText = (raw: string | undefined | null) => {
+  if (!raw) return "";
+  return raw
+    .replace(audioMarkersRegex, "")
+    .replace(customTokenRegex, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+};
+
+type TrainingStatus = "" | "queued" | "running" | "done" | "failed";
+
+interface Message {
+  id: number;
+  sender: "user" | "ai";
+  text: string;
+  audioUrl?: string;
+  duration?: number;
+  imageBase64?: string;
+}
+
+interface Character {
+  id: number;
+  name: string;
+  avatar_path?: string;
+  description?: string;
+  visual_style?: string;
+  appearance_notes?: string;
+  personality?: string;
+  backstory?: string;
+  relationship_type?: string;
+  dos?: string;
+  donts?: string;
+  voice_style?: string;
+  voice_pitch_shift?: number;
+  voice_speed?: number;
+  voice_ref_path?: string;
+  voice_youtube_url?: string;
+  voice_model_path?: string;
+  voice_training_status?: TrainingStatus;
+  voice_error?: string;
+  language?: string;
+}
+
+interface CharacterFormState {
+  id?: number;
+  name: string;
+  description: string;
+  visual_style: string;
+  appearance_notes: string;
+  personality: string;
+  backstory: string;
+  relationship_type: string;
+  dos: string;
+  donts: string;
+  voice_style: string;
+  voice_youtube_url: string;
+  language: string;
+}
+
+const emptyForm: CharacterFormState = {
+  name: "",
+  description: "",
+  visual_style: "",
+  appearance_notes: "",
+  personality: "",
+  backstory: "",
+  relationship_type: "",
+  dos: "",
+  donts: "",
+  voice_style: "",
+  voice_youtube_url: "",
+  language: "en",
+};
+
+function statusTone(status: TrainingStatus) {
+  switch (status) {
+    case "done":
+      return "text-green-400 border-green-500/60 bg-green-500/10";
+    case "running":
+      return "text-pink-300 border-pink-500/60 bg-pink-500/10";
+    case "queued":
+      return "text-amber-300 border-amber-500/60 bg-amber-500/10";
+    case "failed":
+      return "text-red-300 border-red-500/60 bg-red-500/10";
+    default:
+      return "text-gray-300 border-gray-600 bg-gray-700/30";
+  }
+}
+
+const baseConversation: Message[] = [
+  { id: 1, sender: "ai", text: "Hey! I am ready. What should we explore?" },
+];
+
+const avatarUrl = (char: Character | null) => {
+  if (!char?.avatar_path) return "";
+  const base = API_URL.replace(/\/$/, "");
+  return `${base}/avatars/${char.avatar_path}`;
+};
+
+function App() {
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>(baseConversation);
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [selectedCharId, setSelectedCharId] = useState<number | null>(null);
+  const [autoTts, setAutoTts] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState("");
+  const [recordSeconds, setRecordSeconds] = useState(0);
+
+  const [showEditor, setShowEditor] = useState(false);
+  const [form, setForm] = useState<CharacterFormState>(emptyForm);
+  const [voiceFile, setVoiceFile] = useState<File | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [isSavingChar, setIsSavingChar] = useState(false);
+
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [imageNegative, setImageNegative] = useState("");
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+
+  const [trainStatus, setTrainStatus] = useState<TrainingStatus>("");
+  const [trainProgress, setTrainProgress] = useState(0);
+  const [isTraining, setIsTraining] = useState(false);
+  const trainTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playingId, setPlayingId] = useState<number | null>(null);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordStartRef = useRef<number | null>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [micLevel, setMicLevel] = useState(0);
+  const [micStatus, setMicStatus] = useState("");
+  const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+
+  const selectedCharacter = useMemo(
+    () => characters.find((c) => c.id === selectedCharId) || null,
+    [characters, selectedCharId]
+  );
+
+  // Reset conversation when switching characters so each has a fresh chat
+  useEffect(() => {
+    if (selectedCharId !== null) {
+      setMessages(baseConversation);
+      setInput("");
+    }
+  }, [selectedCharId]);
+
+  const fetchCharacters = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_URL}/characters`);
+      const list: Character[] = res.data?.characters || [];
+      setCharacters(list);
+      if (list.length > 0) {
+        setSelectedCharId((prev) => prev ?? list[0].id);
+      }
+    } catch (err) {
+      console.error("Backend not reachable?", err);
+    }
+  }, []);
+
+  const fetchCharacter = useCallback(
+    async (id: number) => {
+      try {
+        const res = await axios.get(`${API_URL}/characters/${id}`);
+        const updated: Character = res.data;
+        setCharacters((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, ...updated } : c))
+        );
+        setTrainStatus(updated.voice_training_status || "");
+        if (updated.voice_training_status === "done") {
+          setTrainProgress(100);
+        }
+        return updated;
+      } catch (err) {
+        console.error("Failed to fetch character", err);
+        return null;
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    fetchCharacters();
+  }, [fetchCharacters]);
+
+  useEffect(() => {
+    return () => {
+      if (trainTimer.current) clearInterval(trainTimer.current);
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (micLevelTimerRef.current) clearInterval(micLevelTimerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+      }
+    };
+  }, []);
+
+  const handleTrainingPoll = useCallback(
+    (id: number) => {
+      if (trainTimer.current) clearInterval(trainTimer.current);
+      trainTimer.current = setInterval(async () => {
+        const updated = await fetchCharacter(id);
+        const status = updated?.voice_training_status || "";
+        if (status === "running") {
+          setTrainProgress((p) => Math.min(95, p + Math.random() * 7 + 3));
+        } else if (status === "done") {
+          setTrainProgress(100);
+          setIsTraining(false);
+          if (trainTimer.current) clearInterval(trainTimer.current);
+        } else if (status === "failed") {
+          setTrainProgress(0);
+          setIsTraining(false);
+          if (trainTimer.current) clearInterval(trainTimer.current);
+        }
+      }, 1500);
+    },
+    [fetchCharacter]
+  );
+
+  const openEditor = (char?: Character) => {
+    if (char) {
+      setForm({
+        id: char.id,
+        name: char.name || "",
+        description: char.description || "",
+        visual_style: char.visual_style || "",
+        appearance_notes: char.appearance_notes || "",
+        personality: char.personality || "",
+        backstory: char.backstory || "",
+        relationship_type: char.relationship_type || "",
+        dos: char.dos || "",
+        donts: char.donts || "",
+        voice_style: char.voice_style || "",
+        voice_youtube_url: char.voice_youtube_url || "",
+        language: char.language || "en",
+      });
+      setTrainStatus(char.voice_training_status || "");
+      setTrainProgress(char.voice_training_status === "done" ? 100 : 0);
+    } else {
+      setForm(emptyForm);
+      setTrainStatus("");
+      setTrainProgress(0);
+    }
+    setVoiceFile(null);
+    setAvatarFile(null);
+    setShowEditor(true);
+  };
+
+  const saveCharacter = async () => {
+    if (!form.name.trim()) {
+      alert("Please enter a name.");
+      return;
+    }
+    setIsSavingChar(true);
+    try {
+      let id = form.id;
+      const payload = { ...form };
+      if (form.id) {
+        await axios.post(`${API_URL}/characters/${form.id}/update`, payload);
+      } else {
+        const res = await axios.post(`${API_URL}/characters`, payload);
+        id = res.data?.id;
+      }
+      if (id && voiceFile) {
+        const fd = new FormData();
+        fd.append("file", voiceFile);
+        await axios.post(`${API_URL}/characters/${id}/voice_dataset`, fd);
+      }
+      if (id && avatarFile) {
+        const fd = new FormData();
+        fd.append("file", avatarFile);
+        await axios.post(`${API_URL}/characters/${id}/avatar`, fd);
+      }
+      await fetchCharacters();
+      if (id) {
+        setSelectedCharId(id);
+        setMessages(baseConversation);
+      }
+      setShowEditor(false);
+      setVoiceFile(null);
+    } catch (err: any) {
+      console.error("Failed to save character:", err);
+      alert(err?.response?.data?.detail || "Could not save character.");
+    } finally {
+      setIsSavingChar(false);
+    }
+  };
+
+  const startTraining = async () => {
+    const id = form.id || selectedCharId;
+    if (!id) {
+      alert("Save the character first, then start training.");
+      return;
+    }
+    setIsTraining(true);
+    setTrainStatus("queued");
+    setTrainProgress(5);
+    try {
+      await axios.post(`${API_URL}/characters/${id}/train_voice`);
+      setTrainStatus("running");
+      handleTrainingPoll(id);
+    } catch (err: any) {
+      console.error("Training failed to start", err);
+      setTrainStatus("failed");
+      setIsTraining(false);
+    }
+  };
+
+  const generateImage = async () => {
+    if (!imagePrompt.trim()) return;
+    setIsGeneratingImage(true);
+    try {
+      const res = await axios.post(`${API_URL}/generate_image`, {
+        prompt: imagePrompt,
+        negative: imageNegative,
+        steps: 24,
+        width: 640,
+        height: 832,
+      });
+      const img = res.data?.images_base64?.[0] || res.data?.image_base64;
+      if (img) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now(),
+            sender: "ai",
+            text: "Generated image",
+            imageBase64: img.startsWith("data:") ? img : `data:image/png;base64,${img}`,
+          },
+        ]);
+      }
+      setShowImageModal(false);
+      setImagePrompt("");
+      setImageNegative("");
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          sender: "ai",
+          text: err?.response?.data?.detail || "Image generation failed.",
+        },
+      ]);
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const sendMessage = async (audioFile?: File) => {
+    if ((!input.trim() && !audioFile) || !selectedCharId) return;
+    if (isSending || isAiSpeaking) return;
+
+    const userId = Date.now();
+    const outgoingText = input.trim() || (audioFile ? "Voice message..." : "");
+    setIsSending(true);
+    setInput("");
+
+    // Show the user message immediately; update text later if transcript arrives
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: userId,
+        sender: "user",
+        text: outgoingText || "(audio not recognized)",
+      },
+    ]);
+
+    try {
+      let res;
+      if (audioFile) {
+        const fd = new FormData();
+        // send empty text so backend transcribes the audio; UI shows placeholder
+        fd.append("message", "");
+        fd.append("audio", audioFile);
+        res = await axios.post(`${API_URL}/chat/${selectedCharId}`, fd);
+      } else {
+        res = await axios.post(`${API_URL}/chat/${selectedCharId}`, {
+          message: outgoingText,
+        });
+      }
+      const usedText =
+        (res.data?.transcription as string | undefined)?.trim() ??
+        (res.data?.user_text as string | undefined)?.trim() ??
+        outgoingText;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === userId ? { ...m, text: usedText || "(audio not recognized)" } : m
+        )
+      );
+
+      const reply = res.data?.reply || "LLM did not respond.";
+      const ttsText = res.data?.reply_tts || reply;
+      const displayReply = cleanReplyText(reply);
+      const aiMsg: Message = {
+        id: Date.now() + 1,
+        sender: "ai",
+        text: displayReply || reply,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+
+      if (autoTts && reply) {
+        // Prefer inline audio from chat response; fallback to separate /tts call
+        const inlineB64 = res.data?.audio_base64 as string | undefined;
+        const playFromBase64 = (b64: string) => {
+          const url = `data:audio/wav;base64,${b64}`;
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          setPlayingId(aiMsg.id);
+          setIsAiSpeaking(true);
+          audio.onloadedmetadata = () => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === aiMsg.id ? { ...m, duration: audio.duration } : m))
+            );
+          };
+          audio.onended = () => {
+            setPlayingId(null);
+            setIsAiSpeaking(false);
+          };
+          audio.onpause = () => {
+            if (audio.ended) {
+              setPlayingId(null);
+              setIsAiSpeaking(false);
+            }
+          };
+          if (autoTts) {
+            audio.play().catch((err) => console.warn("Autoplay failed", err));
+          }
+          setMessages((prev) => prev.map((m) => (m.id === aiMsg.id ? { ...m, audioUrl: url } : m)));
+        };
+
+        if (inlineB64) {
+          playFromBase64(inlineB64);
+        } else {
+          try {
+            const tts = await axios.post(`${API_URL}/tts`, {
+              message: ttsText,
+              character_id: selectedCharId,
+            });
+            if (tts.data?.audio_base64) {
+              playFromBase64(tts.data.audio_base64);
+            }
+          } catch (err) {
+            console.error("TTS failed", err);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Chat failed:", error);
+      setMessages((prev) => [
+        ...prev,
+        { id: Date.now(), sender: "ai", text: "Backend error. Check local model." },
+      ]);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    if (micLevelTimerRef.current) {
+      clearInterval(micLevelTimerRef.current);
+      micLevelTimerRef.current = null;
+    }
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      rec.stop();
+    }
+    mediaRecorderRef.current = null;
+    recordStartRef.current = null;
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+      analyserRef.current = null;
+    }
+    setIsRecording(false);
+    setMicStatus("");
+  };
+
+  const startRecording = async () => {
+    if (isRecording) return;
+    setRecordingError("");
+    setMicStatus("Opening mic…");
+    try {
+      // Always pick system default mic (no deviceId binding)
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          deviceId: "default",
+          channelCount: 1,
+          sampleRate: 16000,
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl: true,
+        },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const activeTrack = stream.getAudioTracks()[0];
+      if (activeTrack?.label) {
+        setMicStatus(`Using: ${activeTrack.label}`);
+      } else {
+        setMicStatus("Using: system default");
+      }
+      const recorder = new MediaRecorder(stream);
+      recordChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());

@@ -153,8 +153,6 @@ function App() {
   const recordChunksRef = useRef<Blob[]>([]);
   const recordStartRef = useRef<number | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedMicId, setSelectedMicId] = useState<string>("");
   const [micLevel, setMicLevel] = useState(0);
   const [micStatus, setMicStatus] = useState("");
   const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -225,19 +223,6 @@ function App() {
       }
     };
   }, []);
-
-  const refreshMics = useCallback(async () => {
-    try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const inputs = devices.filter((d) => d.kind === "audioinput");
-        setMicDevices(inputs);
-        if (!selectedMicId && inputs.length > 0) {
-          setSelectedMicId(inputs[0].deviceId || "");
-        }
-    } catch (err) {
-        console.warn("enumerateDevices failed", err);
-    }
-  }, [selectedMicId]);
 
   const handleTrainingPoll = useCallback(
     (id: number) => {
@@ -528,9 +513,11 @@ function App() {
     setRecordingError("");
     setMicStatus("Opening mic…");
     try {
-      const constraints: MediaStreamConstraints = {
+      // Always pick system default mic; if it's virtual/blacklisted, fall back to first non-blacklisted mic
+      const blacklist = ["voidol", "vb-audio", "virtual", "cable"];
+      const baseConstraints: MediaStreamConstraints = {
         audio: {
-          deviceId: selectedMicId ? { exact: selectedMicId } : undefined,
+          deviceId: "default",
           channelCount: 1,
           sampleRate: 16000,
           noiseSuppression: true,
@@ -538,8 +525,41 @@ function App() {
           autoGainControl: true,
         },
       };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      refreshMics();
+      let stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
+      let activeTrack = stream.getAudioTracks()[0];
+      let label = (activeTrack?.label || "").toLowerCase();
+      if (activeTrack?.label) {
+        setMicStatus(`Using: ${activeTrack.label}`);
+      } else {
+        setMicStatus("Using: system default");
+      }
+      const labelIsBlacklisted = label && blacklist.some((b) => label.includes(b));
+      if (labelIsBlacklisted) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const inputs = devices.filter((d) => d.kind === "audioinput");
+          const best =
+            inputs.find((d) => !blacklist.some((b) => (d.label || "").toLowerCase().includes(b))) ||
+            inputs[0];
+          if (best && best.deviceId) {
+            stream.getTracks().forEach((t) => t.stop());
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                deviceId: { exact: best.deviceId },
+                channelCount: 1,
+                sampleRate: 16000,
+                noiseSuppression: true,
+                echoCancellation: true,
+                autoGainControl: true,
+              },
+            });
+            activeTrack = stream.getAudioTracks()[0];
+            setMicStatus(`Using: ${activeTrack?.label || "fallback mic"}`);
+          }
+        } catch (err) {
+          console.warn("Fallback mic selection failed; using default", err);
+        }
+      }
       const recorder = new MediaRecorder(stream);
       recordChunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -802,24 +822,7 @@ function App() {
             <div className="flex flex-col md:flex-row md:items-center md:gap-3 text-xs text-gray-500 px-1">
               <div className="flex items-center gap-2">
                 <span className="text-gray-400">Mic:</span>
-                <select
-                  value={selectedMicId}
-                  onChange={(e) => setSelectedMicId(e.target.value)}
-                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white text-xs"
-                >
-                  {micDevices.length === 0 && <option value="">Default</option>}
-                  {micDevices.map((d) => (
-                    <option key={d.deviceId || d.label} value={d.deviceId}>
-                      {d.label || "Microphone"}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="px-2 py-1 border border-gray-700 rounded text-gray-300 hover:border-pink-500 hover:text-pink-300"
-                  onClick={() => refreshMics()}
-                >
-                  Refresh
-                </button>
+                <span className="text-gray-200">System default</span>
               </div>
               <div className="flex items-center gap-2 mt-2 md:mt-0">
                 <div className="w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
@@ -984,6 +987,23 @@ function App() {
                       className="w-full mt-1 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 outline-none focus:border-pink-500"
                       placeholder="Companion, domme, sub, girlfriend..."
                     />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400">Language (LLM & STT)</label>
+                    <select
+                      value={form.language}
+                      onChange={(e) => setForm((f) => ({ ...f, language: e.target.value }))}
+                      className="w-full mt-1 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 outline-none focus:border-pink-500 text-sm"
+                    >
+                      <option value="en">English</option>
+                      <option value="de">Deutsch</option>
+                      <option value="fr">Français</option>
+                      <option value="es">Español</option>
+                      <option value="it">Italiano</option>
+                    </select>
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      Steuert Antwortsprache des LLM und bevorzugte STT-Sprache.
+                    </div>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">

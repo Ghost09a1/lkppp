@@ -161,6 +161,25 @@ def _normalize_audio(src: Path) -> Path | None:
     return None
 
 
+def _prune_uploads_dir(upload_dir: Path, keep: int = 1) -> None:
+    """
+    Keep only the newest `keep` files in the uploads directory to avoid disk growth.
+    """
+    try:
+        files = sorted(
+            [p for p in upload_dir.glob("*") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old in files[keep:]:
+            try:
+                old.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _convert_dir_to_wav(raw_dir: Path) -> None:
     """
     Convert all supported compressed audio files in a directory to wav.
@@ -406,6 +425,7 @@ def create_app() -> FastAPI:
         upload_path = uploads_dir / f"{int(time.time())}_{file.filename}"
         with upload_path.open("wb") as f:
             f.write(await file.read())
+        _prune_uploads_dir(uploads_dir, keep=1)
 
         stt_input = upload_path
         if upload_path.suffix.lower() != ".wav":
@@ -471,6 +491,7 @@ def create_app() -> FastAPI:
             upload_path = uploads_dir / f"{int(time.time())}_{audio.filename}"
             with upload_path.open("wb") as f:
                 f.write(await audio.read())
+            _prune_uploads_dir(uploads_dir, keep=1)
 
             # Convert to wav for more reliable STT
             stt_input = upload_path
