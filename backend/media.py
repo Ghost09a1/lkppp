@@ -66,10 +66,13 @@ class MediaRouter:
         # Placeholder hook for future Wan2.2 integration
         return {"ok": False, "error": "Video generation stub. Enable worker implementation."}
 
-    async def transcribe_audio(self, audio_path: Path | str) -> Optional[str]:
+    async def transcribe_audio(self, audio_path: Path | str, language: str | None = None) -> Optional[str]:
         """
         Best-effort transcription. Tries faster-whisper or whisper; returns None on failure.
         """
+        import logging
+
+        logger = logging.getLogger("mycandy.core")
         try:
             from faster_whisper import WhisperModel  # type: ignore
         except Exception:
@@ -79,16 +82,38 @@ class MediaRouter:
             try:
                 model_size = self.config.get("media", {}).get("whisper_model", "small")
                 model = WhisperModel(model_size, device="cpu", compute_type="int8")
-                segments, _ = model.transcribe(str(audio_path), beam_size=1)
-                text = "".join(seg.text for seg in segments)
-                return text.strip()
-            except Exception:
+                segments, _ = model.transcribe(
+                    str(audio_path),
+                    beam_size=5,
+                    temperature=0.0,
+                    language=language if language else None,
+                )
+                text = "".join(seg.text for seg in segments).strip()
+                if text:
+                    logger.info(
+                        "stt faster-whisper ok len=%s lang=%s file=%s",
+                        len(text),
+                        language or "",
+                        audio_path,
+                    )
+                    return text
+                logger.warning("stt faster-whisper empty result file=%s", audio_path)
+            except Exception as exc:
+                logger.warning("stt faster-whisper failed: %s", exc)
                 return None
         try:
             import whisper  # type: ignore
 
             model = whisper.load_model("small")
-            result = model.transcribe(str(audio_path))
-            return (result.get("text") or "").strip()
-        except Exception:
+            result = model.transcribe(str(audio_path), language=language if language else None)
+            text = (result.get("text") or "").strip()
+            logger.info(
+                "stt whisper ok len=%s lang=%s file=%s",
+                len(text),
+                language or "",
+                audio_path,
+            )
+            return text
+        except Exception as exc:
+            logger.warning("stt whisper failed: %s", exc)
             return None

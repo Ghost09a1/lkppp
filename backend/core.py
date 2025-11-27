@@ -379,6 +379,7 @@ def create_app() -> FastAPI:
 
         # Accept message from JSON body or form field
         user_text = ((payload.message if payload else "") or message or "").strip()
+        transcript: str | None = None
 
         # Fallback: if still empty, try raw JSON body
         if not user_text:
@@ -406,9 +407,28 @@ def create_app() -> FastAPI:
             with upload_path.open("wb") as f:
                 f.write(await audio.read())
 
+            # Convert to wav for more reliable STT
+            stt_input = upload_path
+            if upload_path.suffix.lower() != ".wav":
+                wav_converted = _convert_to_wav(upload_path)
+                if wav_converted is not None:
+                    stt_input = wav_converted
+                else:
+                    logger.warning("chat stt convert failed for %s", upload_path)
+
+            lang_pref = (character.get("language") or "").strip()
+            if not lang_pref:
+                lang_pref = media.config.get("media", {}).get("whisper_language", "")
+
             if not user_text:
-                transcription = await media.transcribe_audio(upload_path)
-                user_text = transcription or "(audio received)"
+                transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
+                user_text = transcript or "(audio received)"
+            else:
+                # audio present and text provided: keep a copy for transparency
+                transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
+            logger.info("chat stt transcript_len=%s", len(transcript or ""))
+            if not transcript or not transcript.strip():
+                user_text = "(audio not recognized)"
 
         memory.add_message(char_id, "user", user_text)
         history = memory.get_context(char_id)
@@ -449,7 +469,13 @@ def create_app() -> FastAPI:
         except Exception as exc:
             logger.warning("chat tts inline exception: %s", exc)
 
-        return {"reply": reply, "reply_tts": tts_text, "audio_base64": audio_b64}
+        return {
+            "reply": reply,
+            "reply_tts": tts_text,
+            "audio_base64": audio_b64,
+            "user_text": user_text,
+            "transcription": transcript or "",
+        }
     @app.post("/api/chat/{char_id}")
     async def chat_api(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
         return await chat(char_id, payload, message, audio)
