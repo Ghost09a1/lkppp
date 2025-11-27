@@ -67,6 +67,7 @@ def init_db(db_path: str) -> None:
         "voice_training_status": "TEXT DEFAULT ''",
         "voice_error": "TEXT DEFAULT ''",
         "language": "TEXT DEFAULT 'en'",
+        "avatar_path": "TEXT DEFAULT ''",
     }
     cur.execute("PRAGMA table_info(characters)")
     existing = {row[1] for row in cur.fetchall()}
