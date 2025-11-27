@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
   Send,
@@ -126,6 +126,9 @@ function App() {
   const [selectedCharId, setSelectedCharId] = useState<number | null>(null);
   const [autoTts, setAutoTts] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState("");
+  const [recordSeconds, setRecordSeconds] = useState(0);
 
   const [showEditor, setShowEditor] = useState(false);
   const [form, setForm] = useState<CharacterFormState>(emptyForm);
@@ -143,9 +146,13 @@ function App() {
   const [isTraining, setIsTraining] = useState(false);
   const trainTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingId, setPlayingId] = useState<number | null>(null);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordChunksRef = useRef<Blob[]>([]);
+  const recordStartRef = useRef<number | null>(null);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const selectedCharacter = useMemo(
     () => characters.find((c) => c.id === selectedCharId) || null,
@@ -201,6 +208,10 @@ function App() {
   useEffect(() => {
     return () => {
       if (trainTimer.current) clearInterval(trainTimer.current);
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      }
     };
   }, []);
 
@@ -357,21 +368,36 @@ function App() {
 
   const sendMessage = async (audioFile?: File) => {
     if ((!input.trim() && !audioFile) || !selectedCharId) return;
-    if (isSending) return;
+    if (isSending || isAiSpeaking) return;
 
-    const userMsg: Message = {
-      id: Date.now(),
-      sender: "user",
-      text: input || (audioFile ? "(Audio uploaded)" : ""),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    if (!audioFile) setInput("");
+    const outgoingText = input.trim() || (audioFile ? "Voice message" : "");
+    const userId = Date.now();
     setIsSending(true);
+    if (!audioFile) setInput("");
 
     try {
-      const res = await axios.post(`${API_URL}/chat/${selectedCharId}`, {
-        message: userMsg.text,
-      });
+      let res;
+      if (audioFile) {
+        const fd = new FormData();
+        // send empty text so backend transcribes the audio; UI still shows placeholder
+        fd.append("message", "");
+        fd.append("audio", audioFile);
+        res = await axios.post(`${API_URL}/chat/${selectedCharId}`, fd);
+      } else {
+        res = await axios.post(`${API_URL}/chat/${selectedCharId}`, {
+          message: outgoingText,
+        });
+      }
+      const usedText =
+        (res.data?.transcription as string | undefined)?.trim() ??
+        (res.data?.user_text as string | undefined)?.trim() ??
+        outgoingText;
+      const userMsg: Message = {
+        id: userId,
+        sender: "user",
+        text: usedText || "(audio not recognized)",
+      };
+      setMessages((prev) => [...prev, userMsg]);
       const reply = res.data?.reply || "LLM did not respond.";
       const ttsText = res.data?.reply_tts || reply;
       const displayReply = cleanReplyText(reply);
@@ -390,10 +416,21 @@ function App() {
           const audio = new Audio(url);
           audioRef.current = audio;
           setPlayingId(aiMsg.id);
+          setIsAiSpeaking(true);
           audio.onloadedmetadata = () => {
             setMessages((prev) =>
               prev.map((m) => (m.id === aiMsg.id ? { ...m, duration: audio.duration } : m))
             );
+          };
+          audio.onended = () => {
+            setPlayingId(null);
+            setIsAiSpeaking(false);
+          };
+          audio.onpause = () => {
+            if (audio.ended) {
+              setPlayingId(null);
+              setIsAiSpeaking(false);
+            }
           };
           if (autoTts) {
             audio.play().catch((err) => console.warn("Autoplay failed", err));
@@ -425,6 +462,58 @@ function App() {
       ]);
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (recordTimerRef.current) {
+      clearInterval(recordTimerRef.current);
+      recordTimerRef.current = null;
+    }
+    const rec = mediaRecorderRef.current;
+    if (rec && rec.state !== "inactive") {
+      rec.stop();
+    }
+    mediaRecorderRef.current = null;
+    recordStartRef.current = null;
+    setIsRecording(false);
+  };
+
+  const startRecording = async () => {
+    if (isRecording) return;
+    setRecordingError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(recordChunksRef.current, { type: "audio/webm" });
+        recordChunksRef.current = [];
+        if (blob.size < 500) {
+          setRecordingError("Recording too short.");
+          return;
+        }
+        const file = new File([blob], `mic_${Date.now()}.webm`, { type: blob.type });
+        sendMessage(file);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      recordStartRef.current = Date.now();
+      setRecordSeconds(0);
+      setIsRecording(true);
+      recordTimerRef.current = setInterval(() => {
+        if (recordStartRef.current) {
+          const diff = Date.now() - recordStartRef.current;
+          setRecordSeconds(Math.max(0, diff / 1000));
+        }
+      }, 200);
+    } catch (err: any) {
+      setRecordingError("Mic Zugriff fehlgeschlagen.");
+      setIsRecording(false);
     }
   };
 
@@ -559,7 +648,17 @@ function App() {
                         const audio = new Audio(msg.audioUrl!);
                         audioRef.current = audio;
                         setPlayingId(msg.id);
-                        audio.onended = () => setPlayingId(null);
+                        setIsAiSpeaking(true);
+                        audio.onended = () => {
+                          setPlayingId(null);
+                          setIsAiSpeaking(false);
+                        };
+                        audio.onpause = () => {
+                          if (audio.ended) {
+                            setPlayingId(null);
+                            setIsAiSpeaking(false);
+                          }
+                        };
                         audio.play().catch((err) => console.warn("play failed", err));
                       }}
                       className="p-2 bg-pink-500 rounded-full hover:scale-105 transition"
@@ -619,7 +718,7 @@ function App() {
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
               placeholder="Type a line to start the scene..."
               className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 h-10"
-              disabled={isSending}
+              disabled={isSending || isAiSpeaking}
             />
             <div className="flex items-center gap-2">
               <button
@@ -631,36 +730,56 @@ function App() {
               </button>
               <button
                 type="button"
-                className="p-2 text-gray-400 hover:text-pink-500 transition"
-                onClick={() => fileInputRef.current?.click()}
+                className={`p-2 rounded-full transition ${
+                  isRecording
+                    ? "bg-red-600 text-white shadow-lg shadow-red-600/40"
+                    : "text-gray-400 hover:text-pink-500 hover:bg-gray-700/60"
+                }`}
+                disabled={isSending || isAiSpeaking}
+                onMouseDown={() => !isSending && !isAiSpeaking && startRecording()}
+                onMouseUp={stopRecording}
+                onMouseLeave={() => isRecording && stopRecording()}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  if (!isSending && !isAiSpeaking) startRecording();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  stopRecording();
+                }}
+                onTouchCancel={(e) => {
+                  e.preventDefault();
+                  stopRecording();
+                }}
+                title="Hold to record voice"
               >
                 <Mic size={20} />
               </button>
               <button
                 onClick={() => sendMessage()}
-                disabled={!input.trim() || isSending || !selectedCharId}
+                disabled={!input.trim() || isSending || isAiSpeaking || !selectedCharId}
                 className="p-3 bg-pink-600 hover:bg-pink-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-full transition-all shadow-lg hover:shadow-pink-500/25"
               >
                 <Send size={18} />
               </button>
             </div>
           </div>
+          <div className="max-w-4xl mx-auto mt-2 flex items-center gap-3 text-xs text-gray-500 px-1">
+            {isRecording ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-red-200">
+                  Recording... {recordSeconds.toFixed(1)}s (release to send)
+                </span>
+              </>
+            ) : (
+              <span className="text-gray-500">Hold mic to speak; release to send.</span>
+            )}
+            {recordingError && <span className="text-red-300">• {recordingError}</span>}
+          </div>
           <div className="text-center mt-2 text-xs text-gray-600">Powered by RVC Local & FastAPI</div>
         </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*"
-          className="hidden"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-              sendMessage(file);
-              e.target.value = "";
-            }
-          }}
-        />
       </div>
 
       {showEditor && (
@@ -922,3 +1041,7 @@ function App() {
 }
 
 export default App;
+
+
+
+
