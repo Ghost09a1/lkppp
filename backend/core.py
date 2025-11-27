@@ -7,9 +7,9 @@ import time
 import subprocess
 import shutil
 
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -26,6 +26,37 @@ CONFIG_PATH = ROOT / "config" / "settings.json"
 def load_config() -> Dict[str, Any]:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _convert_to_wav(src: Path) -> Path | None:
+    """
+    Convert an audio file to wav using ffmpeg. Returns destination path or None on failure.
+    """
+    dst = src.with_suffix(".wav")
+    try:
+        cmd = ["ffmpeg", "-y", "-i", str(src), "-ar", "44100", "-ac", "1", str(dst)]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode == 0 and dst.exists():
+            return dst
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def _convert_dir_to_wav(raw_dir: Path) -> None:
+    """
+    Convert all supported compressed audio files in a directory to wav.
+    Raises HTTPException if conversion fails for any mp3-like file.
+    """
+    for ext in (".mp3", ".m4a", ".ogg", ".flac"):
+        for src in raw_dir.glob(f"**/*{ext}"):
+            dst = _convert_to_wav(src)
+            if dst is None:
+                raise HTTPException(status_code=500, detail="ffmpeg missing or audio conversion failed.")
+            try:
+                src.unlink()
+            except Exception:
+                pass
 
 
 class CharacterPayload(BaseModel):
@@ -166,19 +197,23 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def root():
-        index = ui_dir / "index.html"
-        if index.exists():
-            return FileResponse(str(index))
-        return {"status": "backend running, ui missing"}
+        return RedirectResponse(url="/ui/")
 
     @app.get("/characters")
     async def list_characters():
         return {"characters": db.list_characters(conn)}
+    # Aliases for /api/* compatibility (legacy)
+    @app.get("/api/characters")
+    async def list_characters_api():
+        return await list_characters()
 
     @app.post("/characters")
     async def create_character(payload: CharacterPayload):
         char_id = db.add_character(conn, payload.dict())
         return {"id": char_id}
+    @app.post("/api/characters")
+    async def create_character_api(payload: CharacterPayload):
+        return await create_character(payload)
 
     @app.get("/characters/{char_id}")
     async def get_character(char_id: int):
@@ -186,6 +221,9 @@ def create_app() -> FastAPI:
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
         return character
+    @app.get("/api/characters/{char_id}")
+    async def get_character_api(char_id: int):
+        return await get_character(char_id)
 
     @app.post("/characters/{char_id}/update")
     async def update_character(char_id: int, payload: CharacterPayload):
@@ -205,21 +243,52 @@ def create_app() -> FastAPI:
         )
         conn.commit()
         return {"ok": True}
+    @app.post("/api/characters/{char_id}/update")
+    async def update_character_api(char_id: int, payload: CharacterPayload):
+        return await update_character(char_id, payload)
 
     @app.post("/chat/{char_id}")
-    async def chat(char_id: int, payload: ChatPayload):
+    async def chat(
+        char_id: int,
+        payload: ChatPayload | None = Body(None),
+        message: str = Form(""),
+        audio: UploadFile | None = File(None),
+    ):
         character = db.get_character(conn, char_id)
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
-        memory.add_message(char_id, "user", payload.message)
+
+        # Accept message from JSON body or form field
+        user_text = (payload.message if payload else "") or message or ""
+
+        # Handle optional audio -> save and transcribe (best-effort)
+        if audio is not None:
+            uploads_dir = ROOT / "outputs" / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            upload_path = uploads_dir / f"{int(time.time())}_{audio.filename}"
+            with upload_path.open("wb") as f:
+                f.write(await audio.read())
+
+            if not user_text:
+                transcription = await media.transcribe_audio(upload_path)
+                user_text = transcription or "(audio received)"
+
+        memory.add_message(char_id, "user", user_text)
         history = memory.get_context(char_id)
-        history.append({"role": "user", "content": payload.message})
+        history.append({"role": "user", "content": user_text})
         reply = await llm_client.generate_chat(character, history, stream=False)
         if reply is None:
+            print("[chat] LLM returned None")
             reply = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
+        else:
+            preview = (reply[:120] + "...") if len(reply) > 120 else reply
+            print(f"[chat] reply ok (len={len(reply)}) for char {char_id}: {preview}")
         memory.add_message(char_id, "assistant", reply)
         await memory.maybe_summarize(char_id)
         return {"reply": reply}
+    @app.post("/api/chat/{char_id}")
+    async def chat_api(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
+        return await chat(char_id, payload, message, audio)
 
     @app.post("/chat_stream/{char_id}")
     async def chat_stream(char_id: int, payload: ChatPayload):
@@ -260,6 +329,9 @@ def create_app() -> FastAPI:
     async def tts(payload: TtsPayload):
         character = db.get_character(conn, payload.character_id) if payload.character_id else None
         return await media.tts(payload.message, character)
+    @app.post("/api/tts")
+    async def tts_api(payload: TtsPayload):
+        return await tts(payload)
 
     @app.post("/characters/{char_id}/voice_sample")
     async def upload_voice_sample(char_id: int, file: bytes = None):
@@ -274,6 +346,9 @@ def create_app() -> FastAPI:
         cur.execute("UPDATE characters SET voice_ref_path = ? WHERE id = ?", (str(out_path), char_id))
         conn.commit()
         return {"ok": True, "path": str(out_path)}
+    @app.post("/api/characters/{char_id}/voice_sample")
+    async def upload_voice_sample_api(char_id: int, file: bytes = None):
+        return await upload_voice_sample(char_id, file)
 
     @app.post("/characters/{char_id}/voice_sample_url")
     async def upload_voice_sample_url(char_id: int, payload: Dict[str, str]):
@@ -315,6 +390,9 @@ def create_app() -> FastAPI:
         )
         conn.commit()
         return {"ok": True, "path": str(out_path)}
+    @app.post("/api/characters/{char_id}/voice_sample_url")
+    async def upload_voice_sample_url_api(char_id: int, payload: Dict[str, str]):
+        return await upload_voice_sample_url(char_id, payload)
 
     @app.post("/characters/{char_id}/voice_dataset")
     async def upload_voice_dataset(char_id: int, file: UploadFile = File(...)):
@@ -332,12 +410,24 @@ def create_app() -> FastAPI:
                     zf.extractall(raw_dir)
             finally:
                 tmp_zip.unlink(missing_ok=True)
+            _convert_dir_to_wav(raw_dir)
             saved_files = [str(p) for p in raw_dir.glob("**/*.wav")]
         else:
-            target = raw_dir / (Path(filename).stem + ".wav")
-            with target.open("wb") as f:
+            temp_target = raw_dir / filename
+            with temp_target.open("wb") as f:
                 f.write(await file.read())
-            saved_files = [str(target)]
+            if suffix in {".mp3", ".m4a", ".ogg", ".flac"}:
+                wav_target = _convert_to_wav(temp_target)
+                if wav_target is None:
+                    raise HTTPException(status_code=500, detail="ffmpeg missing or audio conversion failed.")
+                try:
+                    temp_target.unlink()
+                except Exception:
+                    pass
+                saved_files = [str(wav_target)]
+            else:
+                # assume already wav
+                saved_files = [str(temp_target)]
         voice_ref = _first_wav_in_raw(char_id)
         if voice_ref:
             cur = conn.cursor()
@@ -347,6 +437,9 @@ def create_app() -> FastAPI:
             )
             conn.commit()
         return {"ok": True, "files": saved_files, "voice_ref_path": voice_ref}
+    @app.post("/api/characters/{char_id}/voice_dataset")
+    async def upload_voice_dataset_api(char_id: int, file: UploadFile = File(...)):
+        return await upload_voice_dataset(char_id, file)
 
     @app.post("/characters/{char_id}/train_voice")
     async def train_voice(char_id: int):
@@ -357,6 +450,9 @@ def create_app() -> FastAPI:
         thread = threading.Thread(target=_run_training, args=(char_id,), daemon=True)
         thread.start()
         return {"ok": True, "status": "queued"}
+    @app.post("/api/characters/{char_id}/train_voice")
+    async def train_voice_api(char_id: int):
+        return await train_voice(char_id)
 
     return app
 

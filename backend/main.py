@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, Form, UploadFile, File
+from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -61,9 +61,18 @@ app.mount("/audio", StaticFiles(directory=OUTPUTS_DIR), name="audio")
 # Optional: serve model images if present
 if os.path.exists(MODELS_DIR):
     app.mount("/models", StaticFiles(directory=MODELS_DIR), name="models")
-# Serve built frontend (if present)
+from fastapi.responses import RedirectResponse
+
+# Serve built frontend (unter /ui), Root -> Redirect
 if UI_DIR and os.path.exists(UI_DIR):
-    app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")
+    app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
+
+
+@app.get("/")
+async def root_redirect():
+    if UI_DIR and os.path.exists(UI_DIR):
+        return RedirectResponse(url="/ui/")
+    return {"status": "ok"}
 
 media_router = MediaRouter(SETTINGS)
 llm_client = LLMClient(SETTINGS)
@@ -105,6 +114,12 @@ def _list_models_with_meta():
             }
         )
     return models
+
+
+def _safe_name(name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name.strip())
+    return cleaned or f"char_{uuid.uuid4().hex[:6]}"
+
 
 
 def _maybe_call_ollama(prompt: str, model: str | None = None) -> str | None:
@@ -164,6 +179,45 @@ async def get_status():
 async def get_characters():
     """Scannt den models/-Ordner nach .pth Dateien und liefert eine Liste mit Meta zurück."""
     return _list_models_with_meta()
+
+
+@app.post("/api/generate_image")
+async def generate_image(prompt: str = Form(...), negative: str = Form("")):
+    img_resp = await media_router.generate_image(prompt, negative, 20, 512, 768)
+    if not img_resp.get("ok"):
+        raise HTTPException(status_code=500, detail=img_resp.get("error", "Image worker unavailable"))
+
+    images = img_resp.get("images_base64") or img_resp.get("images") or []
+    if not images:
+        raise HTTPException(status_code=500, detail="Keine Bilder zurückgegeben.")
+    return {"image_base64": images[0]}
+
+
+@app.post("/api/characters/create")
+async def create_character(
+    name: str = Form(...),
+    model_file: UploadFile | None = File(None),
+    image_file: UploadFile | None = File(None),
+):
+    if model_file is None or not model_file.filename:
+        raise HTTPException(status_code=400, detail="Model (.pth) wird benötigt.")
+
+    safe_name = _safe_name(name)
+    model_ext = Path(model_file.filename).suffix.lower()
+    if model_ext != ".pth":
+        raise HTTPException(status_code=400, detail="Bitte ein .pth Model hochladen.")
+
+    model_path = Path(MODELS_DIR) / f"{safe_name}{model_ext}"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(await model_file.read())
+
+    if image_file and image_file.filename:
+        img_ext = Path(image_file.filename).suffix.lower()
+        if img_ext in {".png", ".jpg", ".jpeg", ".webp"}:
+            img_path = Path(MODELS_DIR) / f"{safe_name}{img_ext}"
+            img_path.write_bytes(await image_file.read())
+
+    return {"id": model_path.name}
 
 
 @app.post("/api/chat")
@@ -260,4 +314,4 @@ async def get_audio(filename: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=False)

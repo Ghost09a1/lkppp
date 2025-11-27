@@ -1,5 +1,7 @@
 import json
+from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
+import asyncio
 
 import httpx
 
@@ -8,6 +10,11 @@ class LLMClient:
     def __init__(self, config: Dict[str, Any]):
         self.mode = config["llm"]["mode"]
         self.cfg = config
+        # resolve absolute model path for llama.cpp server to avoid relative path issues
+        try:
+            self.llama_model_path = str(Path(config["llm"]["llama_cpp_server"]["model_path"]).resolve())
+        except Exception:
+            self.llama_model_path = config["llm"]["llama_cpp_server"]["model_path"]
 
     def _system_prompt(self, character: Dict[str, Any]) -> str:
         persona = [
@@ -71,23 +78,46 @@ class LLMClient:
         host = f"http://127.0.0.1:{self.cfg['llm']['llama_cpp_server']['port']}"
         headers = {"Content-Type": "application/json"}
         payload = {
-            "model": self.cfg["llm"]["llama_cpp_server"]["model_path"],
+            "model": self.llama_model_path,
             "stream": stream,
             "messages": [{"role": "system", "content": self._system_prompt(character)}] + history,
             "temperature": 0.9,
         }
-        client = httpx.AsyncClient(timeout=60)
-        if stream:
-            return self._stream_llama_cpp(client, host, headers, payload)
-        try:
-            resp = await client.post(f"{host}/v1/chat/completions", json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
-        except Exception:
+        async with httpx.AsyncClient(timeout=120) as client:
+            if stream:
+                return self._stream_llama_cpp(client, host, headers, payload)
+            attempts = [
+                ("abs", payload),
+                ("base", {**payload, "model": Path(self.llama_model_path).name}),
+            ]
+            for label, body in attempts:
+                # allow long first-load (model warmup can take ~1 min)
+                max_attempts = 20
+                for attempt in range(max_attempts):
+                    resp = None
+                    try:
+                        resp = await client.post(f"{host}/v1/chat/completions", json=body, headers=headers)
+                        if resp.status_code == 503:
+                            # Model still loading, wait and retry
+                            await asyncio.sleep(2 + attempt * 0.5)
+                            continue
+                        resp.raise_for_status()
+                        data = resp.json()
+                        reply = data["choices"][0]["message"]["content"]
+                        print(f"[llm] llama.cpp ok ({label}) len={len(reply)} model={body['model']}")
+                        return reply
+                    except Exception as exc:
+                        if attempt < max_attempts - 1:
+                            await asyncio.sleep(0.5)
+                            continue
+                        print(f"[llm] llama.cpp call failed ({label}) model={body['model']} ({exc})")
+                        try:
+                            if resp is not None:
+                                print(f"[llm] response text: {resp.text}")
+                        except Exception:
+                            pass
+                        break
             return None
-        finally:
-            await client.aclose()
 
     async def _call_ollama(
         self,
