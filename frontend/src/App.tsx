@@ -153,6 +153,13 @@ function App() {
   const recordChunksRef = useRef<Blob[]>([]);
   const recordStartRef = useRef<number | null>(null);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string>("");
+  const [micLevel, setMicLevel] = useState(0);
+  const [micStatus, setMicStatus] = useState("");
+  const micLevelTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
 
   const selectedCharacter = useMemo(
     () => characters.find((c) => c.id === selectedCharId) || null,
@@ -209,11 +216,28 @@ function App() {
     return () => {
       if (trainTimer.current) clearInterval(trainTimer.current);
       if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (micLevelTimerRef.current) clearInterval(micLevelTimerRef.current);
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+      }
     };
   }, []);
+
+  const refreshMics = useCallback(async () => {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter((d) => d.kind === "audioinput");
+        setMicDevices(inputs);
+        if (!selectedMicId && inputs.length > 0) {
+          setSelectedMicId(inputs[0].deviceId || "");
+        }
+    } catch (err) {
+        console.warn("enumerateDevices failed", err);
+    }
+  }, [selectedMicId]);
 
   const handleTrainingPoll = useCallback(
     (id: number) => {
@@ -370,16 +394,26 @@ function App() {
     if ((!input.trim() && !audioFile) || !selectedCharId) return;
     if (isSending || isAiSpeaking) return;
 
-    const outgoingText = input.trim() || (audioFile ? "Voice message" : "");
     const userId = Date.now();
+    const outgoingText = input.trim() || (audioFile ? "Voice message..." : "");
     setIsSending(true);
-    if (!audioFile) setInput("");
+    setInput("");
+
+    // Show the user message immediately; update text later if transcript arrives
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: userId,
+        sender: "user",
+        text: outgoingText || "(audio not recognized)",
+      },
+    ]);
 
     try {
       let res;
       if (audioFile) {
         const fd = new FormData();
-        // send empty text so backend transcribes the audio; UI still shows placeholder
+        // send empty text so backend transcribes the audio; UI shows placeholder
         fd.append("message", "");
         fd.append("audio", audioFile);
         res = await axios.post(`${API_URL}/chat/${selectedCharId}`, fd);
@@ -392,12 +426,12 @@ function App() {
         (res.data?.transcription as string | undefined)?.trim() ??
         (res.data?.user_text as string | undefined)?.trim() ??
         outgoingText;
-      const userMsg: Message = {
-        id: userId,
-        sender: "user",
-        text: usedText || "(audio not recognized)",
-      };
-      setMessages((prev) => [...prev, userMsg]);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === userId ? { ...m, text: usedText || "(audio not recognized)" } : m
+        )
+      );
+
       const reply = res.data?.reply || "LLM did not respond.";
       const ttsText = res.data?.reply_tts || reply;
       const displayReply = cleanReplyText(reply);
@@ -470,20 +504,42 @@ function App() {
       clearInterval(recordTimerRef.current);
       recordTimerRef.current = null;
     }
+    if (micLevelTimerRef.current) {
+      clearInterval(micLevelTimerRef.current);
+      micLevelTimerRef.current = null;
+    }
     const rec = mediaRecorderRef.current;
     if (rec && rec.state !== "inactive") {
       rec.stop();
     }
     mediaRecorderRef.current = null;
     recordStartRef.current = null;
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+      analyserRef.current = null;
+    }
     setIsRecording(false);
+    setMicStatus("");
   };
 
   const startRecording = async () => {
     if (isRecording) return;
     setRecordingError("");
+    setMicStatus("Opening mic…");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          deviceId: selectedMicId ? { exact: selectedMicId } : undefined,
+          channelCount: 1,
+          sampleRate: 16000,
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl: true,
+        },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      refreshMics();
       const recorder = new MediaRecorder(stream);
       recordChunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -491,6 +547,16 @@ function App() {
       };
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
+        if (micLevelTimerRef.current) {
+          clearInterval(micLevelTimerRef.current);
+          micLevelTimerRef.current = null;
+        }
+        if (audioCtxRef.current) {
+          audioCtxRef.current.close().catch(() => {});
+          audioCtxRef.current = null;
+          analyserRef.current = null;
+        }
+        setMicStatus("");
         const blob = new Blob(recordChunksRef.current, { type: "audio/webm" });
         recordChunksRef.current = [];
         if (blob.size < 500) {
@@ -501,6 +567,27 @@ function App() {
         sendMessage(file);
       };
       recorder.start();
+      // VU meter setup
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      audioCtxRef.current = audioCtx;
+      analyserRef.current = analyser;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      micLevelTimerRef.current = setInterval(() => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteTimeDomainData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const v = dataArray[i] - 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / dataArray.length) / 128; // 0..1
+        setMicLevel(Math.min(1, rms * 2));
+      }, 100);
+
       mediaRecorderRef.current = recorder;
       recordStartRef.current = Date.now();
       setRecordSeconds(0);
@@ -513,6 +600,7 @@ function App() {
       }, 200);
     } catch (err: any) {
       setRecordingError("Mic Zugriff fehlgeschlagen.");
+      setMicStatus("Mic failed");
       setIsRecording(false);
     }
   };
@@ -710,74 +798,112 @@ function App() {
         </div>
 
         <div className="p-4 md:p-6 pb-8">
-          <div className="max-w-4xl mx-auto relative flex items-center bg-gray-800/90 backdrop-blur border border-gray-700 rounded-full p-2 pr-2 pl-6 shadow-2xl">
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder="Type a line to start the scene..."
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 h-10"
-              disabled={isSending || isAiSpeaking}
-            />
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="p-2 text-gray-400 hover:text-pink-500 transition"
-                onClick={() => setShowImageModal(true)}
-              >
-                <ImageIcon size={20} />
-              </button>
-              <button
-                type="button"
-                className={`p-2 rounded-full transition ${
-                  isRecording
-                    ? "bg-red-600 text-white shadow-lg shadow-red-600/40"
-                    : "text-gray-400 hover:text-pink-500 hover:bg-gray-700/60"
-                }`}
-                disabled={isSending || isAiSpeaking}
-                onMouseDown={() => !isSending && !isAiSpeaking && startRecording()}
-                onMouseUp={stopRecording}
-                onMouseLeave={() => isRecording && stopRecording()}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  if (!isSending && !isAiSpeaking) startRecording();
-                }}
-                onTouchEnd={(e) => {
-                  e.preventDefault();
-                  stopRecording();
-                }}
-                onTouchCancel={(e) => {
-                  e.preventDefault();
-                  stopRecording();
-                }}
-                title="Hold to record voice"
-              >
-                <Mic size={20} />
-              </button>
-              <button
-                onClick={() => sendMessage()}
-                disabled={!input.trim() || isSending || isAiSpeaking || !selectedCharId}
-                className="p-3 bg-pink-600 hover:bg-pink-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-full transition-all shadow-lg hover:shadow-pink-500/25"
-              >
-                <Send size={18} />
-              </button>
-            </div>
-          </div>
-          <div className="max-w-4xl mx-auto mt-2 flex items-center gap-3 text-xs text-gray-500 px-1">
-            {isRecording ? (
-              <>
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-200">
-                  Recording... {recordSeconds.toFixed(1)}s (release to send)
+          <div className="max-w-4xl mx-auto space-y-2">
+            <div className="flex flex-col md:flex-row md:items-center md:gap-3 text-xs text-gray-500 px-1">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-400">Mic:</span>
+                <select
+                  value={selectedMicId}
+                  onChange={(e) => setSelectedMicId(e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-white text-xs"
+                >
+                  {micDevices.length === 0 && <option value="">Default</option>}
+                  {micDevices.map((d) => (
+                    <option key={d.deviceId || d.label} value={d.deviceId}>
+                      {d.label || "Microphone"}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="px-2 py-1 border border-gray-700 rounded text-gray-300 hover:border-pink-500 hover:text-pink-300"
+                  onClick={() => refreshMics()}
+                >
+                  Refresh
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mt-2 md:mt-0">
+                <div className="w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-pink-400 transition-all"
+                    style={{ width: `${Math.min(100, Math.round(micLevel * 100))}%` }}
+                  />
+                </div>
+                <span className="text-gray-400">
+                  {micStatus || (micLevel > 0.05 ? "Signal" : "No signal")}
                 </span>
-              </>
-            ) : (
-              <span className="text-gray-500">Hold mic to speak; release to send.</span>
-            )}
-            {recordingError && <span className="text-red-300">• {recordingError}</span>}
+                {recordingError && <span className="text-red-300">• {recordingError}</span>}
+              </div>
+            </div>
+
+            <div className="relative flex items-center bg-gray-800/90 backdrop-blur border border-gray-700 rounded-full p-2 pr-2 pl-6 shadow-2xl">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                placeholder="Type a line to start the scene..."
+                className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 h-10"
+                disabled={isSending || isAiSpeaking}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="p-2 text-gray-400 hover:text-pink-500 transition"
+                  onClick={() => setShowImageModal(true)}
+                >
+                  <ImageIcon size={20} />
+                </button>
+                <button
+                  type="button"
+                  className={`p-2 rounded-full transition ${
+                    isRecording
+                      ? "bg-red-600 text-white shadow-lg shadow-red-600/40"
+                      : "text-gray-400 hover:text-pink-500 hover:bg-gray-700/60"
+                  }`}
+                  disabled={isSending || isAiSpeaking}
+                  onMouseDown={() => !isSending && !isAiSpeaking && startRecording()}
+                  onMouseUp={stopRecording}
+                  onMouseLeave={() => isRecording && stopRecording()}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    if (!isSending && !isAiSpeaking) startRecording();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    stopRecording();
+                  }}
+                  onTouchCancel={(e) => {
+                    e.preventDefault();
+                    stopRecording();
+                  }}
+                  title="Hold to record voice"
+                >
+                  <Mic size={20} />
+                </button>
+                <button
+                  onClick={() => sendMessage()}
+                  disabled={!input.trim() || isSending || isAiSpeaking || !selectedCharId}
+                  className="p-3 bg-pink-600 hover:bg-pink-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-full transition-all shadow-lg hover:shadow-pink-500/25"
+                >
+                  <Send size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 text-xs text-gray-500 px-1">
+              {isRecording ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-red-200">
+                    Recording... {recordSeconds.toFixed(1)}s (release to send)
+                  </span>
+                </>
+              ) : (
+                <span className="text-gray-500">Hold mic to speak; release to send.</span>
+              )}
+            </div>
+            <div className="text-center mt-2 text-xs text-gray-600">Powered by RVC Local & FastAPI</div>
           </div>
-          <div className="text-center mt-2 text-xs text-gray-600">Powered by RVC Local & FastAPI</div>
         </div>
 
       </div>

@@ -29,6 +29,9 @@
                   "ui_dir":  "ui"
               },
     "media":  {
+                  "whisper_model": "medium",
+                  "whisper_model_path": "",
+                  "whisper_language": "",
                   "tts_enabled":  true,
                   "tts_model_path":  "models/tts/Orpheus-3b-German-FT-Q8_0.gguf",
                   "tts_vocoder_path": "models/tts/WavTokenizer-Large-75-F16.gguf",

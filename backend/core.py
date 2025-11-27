@@ -123,7 +123,36 @@ def _convert_to_wav(src: Path) -> Path | None:
     """
     dst = src.with_suffix(".wav")
     try:
-        cmd = ["ffmpeg", "-y", "-i", str(src), "-ar", "44100", "-ac", "1", str(dst)]
+        # Downsample to 16k mono for more stable STT results
+        cmd = ["ffmpeg", "-y", "-i", str(src), "-ar", "16000", "-ac", "1", str(dst)]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if result.returncode == 0 and dst.exists():
+            return dst
+    except FileNotFoundError:
+        return None
+    return None
+
+
+def _normalize_audio(src: Path) -> Path | None:
+    """
+    Loudness-normalize audio to improve STT on very quiet recordings.
+    """
+    dst = src.with_name(src.stem + "_norm.wav")
+    try:
+        # loudnorm keeps levels consistent without hard clipping
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(src),
+            "-af",
+            "loudnorm=I=-20:TP=-1.5:LRA=11",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            str(dst),
+        ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
         if result.returncode == 0 and dst.exists():
             return dst
@@ -365,6 +394,42 @@ def create_app() -> FastAPI:
     async def update_character_api(char_id: int, payload: CharacterPayload):
         return await update_character(char_id, payload)
 
+    @app.post("/stt")
+    async def stt(
+        file: UploadFile = File(...),
+        language: str = Form(""),
+    ):
+        if not file:
+            raise HTTPException(status_code=400, detail="No audio provided.")
+        uploads_dir = ROOT / "outputs" / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = uploads_dir / f"{int(time.time())}_{file.filename}"
+        with upload_path.open("wb") as f:
+            f.write(await file.read())
+
+        stt_input = upload_path
+        if upload_path.suffix.lower() != ".wav":
+            wav_converted = _convert_to_wav(upload_path)
+            if wav_converted is not None:
+                stt_input = wav_converted
+            else:
+                logger.warning("stt convert failed for %s", upload_path)
+        normalized = _normalize_audio(stt_input)
+        if normalized is not None:
+            stt_input = normalized
+
+        lang_pref = (language or "").strip() or media.config.get("media", {}).get("whisper_language", "")
+        transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
+        if not transcript:
+            raise HTTPException(status_code=500, detail="Transcription failed or empty.")
+        return {"text": transcript, "language": lang_pref or ""}
+    @app.post("/api/stt")
+    async def stt_api(
+        file: UploadFile = File(...),
+        language: str = Form(""),
+    ):
+        return await stt(file, language)
+
     @app.post("/chat/{char_id}")
     async def chat(
         char_id: int,
@@ -415,6 +480,10 @@ def create_app() -> FastAPI:
                     stt_input = wav_converted
                 else:
                     logger.warning("chat stt convert failed for %s", upload_path)
+            # Normalize volume to avoid near-silent captures
+            normalized = _normalize_audio(stt_input)
+            if normalized is not None:
+                stt_input = normalized
 
             lang_pref = (character.get("language") or "").strip()
             if not lang_pref:
