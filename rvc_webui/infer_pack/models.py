@@ -361,6 +361,7 @@ class SineGen(torch.nn.Module):
             )
             sine_waves = sine_waves * self.sine_amp
             uv = self._f02uv(f0)
+            uv = uv.float()
             uv = F.interpolate(
                 uv.transpose(2, 1), scale_factor=upp, mode="nearest"
             ).transpose(2, 1)
