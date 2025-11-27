@@ -9,3 +9,5 @@ soundfile
 pyttsx3
 librosa
 yt-dlp
+faster-whisper
+openai-whisper
