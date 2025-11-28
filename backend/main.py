@@ -66,6 +66,9 @@ from fastapi.responses import RedirectResponse
 # Serve built frontend (unter /ui), Root -> Redirect
 if UI_DIR and os.path.exists(UI_DIR):
     app.mount("/ui", StaticFiles(directory=UI_DIR, html=True), name="ui")
+    assets_dir = Path(UI_DIR) / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir, html=False), name="ui-assets")
 
 
 @app.get("/")

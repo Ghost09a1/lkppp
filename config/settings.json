@@ -44,9 +44,14 @@
                   "rvc_cli_path": "rvc_webui/infer-web.py",
                   "rvc_webui_dir": "C:/Users/Ghost/Desktop/avo/MyCandyLocal/rvc_webui",
                   "tts_port":  8020,
-                  "sdnext_enabled":  true,
+                  "sdnext_enabled":  false,
                   "sdnext_host":  "http://127.0.0.1:7860",
-                  "video_enabled":  false
+                  "sdxl_model_path": "models/images/ponyDiffusionV6XL_v615.safetensors",
+                  "image_seed": 12345,
+                  "image_mode": "local",
+                  "svd_model_id": "stabilityai/stable-video-diffusion-img2vid-xt",
+                  "video_seed": 777,
+                  "video_enabled":  true
               },
     "ui":  {
                "open_browser":  true,

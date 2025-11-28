@@ -299,6 +299,10 @@ def create_app() -> FastAPI:
 
     ui_dir = ROOT / config["paths"]["ui_dir"]
     app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+    # Vite build uses /assets/* paths by default; expose them at root /assets
+    assets_dir = ui_dir / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir), html=False), name="ui-assets")
     app.mount("/avatars", StaticFiles(directory=str(avatars_dir), html=False), name="avatars")
     app.mount("/images", StaticFiles(directory=str(images_dir), html=False), name="images")
     app.mount("/videos", StaticFiles(directory=str(videos_dir), html=False), name="videos")
