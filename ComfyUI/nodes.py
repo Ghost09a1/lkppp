@@ -1,7 +1,6 @@
 from __future__ import annotations
 import torch
 
-
 import os
 import sys
 import json
@@ -43,28 +42,56 @@ import folder_paths
 import latent_preview
 import node_helpers
 
+# ------------------------------------------------------------------
+# Compatibility-Shim für unterschiedliche comfy.model_management APIs
+# ------------------------------------------------------------------
+_mm = comfy.model_management
+
+# In manchen Versionen fehlt diese Funktion komplett – dann einfach no-op.
+if not hasattr(_mm, "throw_exception_if_processing_interrupted"):
+    def _noop_throw_exception_if_processing_interrupted() -> None:
+        return
+    _mm.throw_exception_if_processing_interrupted = _noop_throw_exception_if_processing_interrupted
+
+# Ältere Versionen nutzen interrupt_current_processing, neuere evtl. nicht.
+if not hasattr(_mm, "interrupt_current_processing"):
+    def _noop_interrupt_current_processing(value: bool = True) -> None:
+        return
+    _mm.interrupt_current_processing = _noop_interrupt_current_processing
+
+# Einige Versionen haben keine eigene InterruptProcessingException-Klasse.
+if not hasattr(_mm, "InterruptProcessingException"):
+    class InterruptProcessingException(Exception):
+        """Dummy-Ersatz, damit 'except comfy.model_management.InterruptProcessingException'
+        nicht abstürzt, wenn die Klasse in dieser comfy-Version fehlt.
+        """
+        pass
+    _mm.InterruptProcessingException = InterruptProcessingException
+
+
 def before_node_execution():
+    # nutzt jetzt ggf. unsere no-op Version, crasht aber nicht mehr
     comfy.model_management.throw_exception_if_processing_interrupted()
 
-def interrupt_processing(value=True):
+
+def interrupt_processing(value: bool = True):
     """
-    Compatibility wrapper: older ComfyUI used
-    comfy.model_management.interrupt_current_processing,
-    neuere Versionen haben diese Funktion evtl. nicht mehr.
-    Dann machen wir einfach nichts.
+    Compatibility wrapper: ältere ComfyUI-Versionen nutzten
+    comfy.model_management.interrupt_current_processing, neuere evtl. etwas anderes.
+    Wenn es nichts Passendes gibt, machen wir einfach nichts.
     """
     mm = comfy.model_management
     if hasattr(mm, "interrupt_current_processing"):
         mm.interrupt_current_processing(value)
     elif hasattr(mm, "interrupt_processing"):
-        # fallback, falls es eine neue API gibt
         mm.interrupt_processing(value)
     else:
         # keine passende Funktion vorhanden -> no-op
         return
 
 
-MAX_RESOLUTION=16384
+MAX_RESOLUTION = 16384
+
 
 class CLIPTextEncode(ComfyNodeABC):
     @classmethod
