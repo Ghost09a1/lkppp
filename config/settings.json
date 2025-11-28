@@ -48,7 +48,7 @@
                   "sdnext_host":  "http://127.0.0.1:7860",
                   "sdxl_model_path": "models/images/ponyDiffusionV6XL_v615.safetensors",
                   "image_seed": 12345,
-                  "image_mode": "local",
+                  "image_mode": "sdnext",
                   "svd_model_id": "stabilityai/stable-video-diffusion-img2vid-xt",
                   "video_seed": 777,
                   "video_enabled":  true
