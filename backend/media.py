@@ -103,6 +103,9 @@ class MediaRouter:
                 self._sd_pipe = pipe
                 return pipe
             except Exception as exc:
+                msg = str(exc).lower()
+                if "not enough gpu video memory" in msg or "could not allocate tensor" in msg or "out of memory" in msg:
+                    raise exc  # Re-raise to be caught by the caller
                 logging.getLogger("mycandy.core").error("Failed to load local SDXL model: %s", exc)
                 self._sd_pipe = None
                 return None
@@ -176,14 +179,17 @@ class MediaRouter:
         async def _local_sdxl() -> Dict[str, Any]:
             if self._device is None:
                 return {"ok": False, "error": "No GPU/DirectML device available. Install CUDA or torch-directml for ARC."}
-            pipe = await self._ensure_sdxl()
-            if pipe is None:
-                return {"ok": False, "error": "Local SDXL model not found or failed to load. Check 'sdxl_model_path' in config/settings.json."}
+            
             try:
+                pipe = await self._ensure_sdxl()
+                if pipe is None:
+                    return {"ok": False, "error": "Local SDXL model not found or failed to load. Check 'sdxl_model_path' in config/settings.json."}
+                
                 generator = None
                 seed = self.config["media"].get("image_seed")
                 if isinstance(seed, int):
                     generator = torch.Generator(device=self._device).manual_seed(seed)
+                
                 result = pipe(
                     prompt=prompt,
                     negative_prompt=negative,
@@ -198,35 +204,14 @@ class MediaRouter:
                 img.save(buf, format="PNG")
                 b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
                 return {"ok": True, "images_base64": [b64]}
+
             except Exception as exc:
                 logging.getLogger("mycandy.core").warning("Local SDXL failed on %s: %s", self._device, exc)
                 msg = str(exc).lower()
                 if "not enough gpu video memory" in msg or "could not allocate tensor" in msg or "out of memory" in msg:
-                    try:
-                        new_w = max(384, width // 2)
-                        new_h = max(512, height // 2)
-                        new_steps = min(steps, 15)
-                        generator = None
-                        seed = self.config["media"].get("image_seed")
-                        if isinstance(seed, int):
-                            generator = torch.Generator(device=self._device).manual_seed(seed)
-                        result = pipe(
-                            prompt=prompt,
-                            negative_prompt=negative,
-                            num_inference_steps=new_steps,
-                            width=new_w,
-                            height=new_h,
-                            guidance_scale=7.0,
-                            generator=generator,
-                        )
-                        img = result.images[0]
-                        buf = io.BytesIO()
-                        img.save(buf, format="PNG")
-                        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                        return {"ok": True, "images_base64": [b64], "device": str(self._device), "scaled": True}
-                    except Exception as exc_retry:
-                        logging.getLogger("mycandy.core").warning("SDXL retry on %s failed: %s", self._device, exc_retry)
-                        return {"ok": False, "error": "CUDA out of memory. Your GPU does not have enough video memory to run the Stable Diffusion model, even after automatically attempting to run at a lower resolution. Please close other GPU-intensive applications or consider using 'image_mode: \"sdnext\"' in your config/settings.json to offload to a dedicated image generation server."}
+                    # This error is now caught during loading and inference.
+                    return {"ok": False, "error": "CUDA out of memory. Your GPU does not have enough video memory to run the Stable Diffusion model. Please close other GPU-intensive applications or consider using 'image_mode: \"sdnext\"' in your config/settings.json to offload to a dedicated image generation server."}
+
                 return {"ok": False, "error": f"Local SDXL failed due to an unexpected error: {exc}"}
 
         if mode == "sdnext":
@@ -236,15 +221,22 @@ class MediaRouter:
             return await _do_sdnext_call(sdreq)
 
         if mode == "local":
-            local_resp = await _local_sdxl()
-            if local_resp.get("ok") or mode == "local":
-                return local_resp
-            # mode == auto and local failed -> fall through to sdnext
+            return await _local_sdxl()
 
+        # Auto mode
+        local_resp = await _local_sdxl()
+        if local_resp.get("ok"):
+            return local_resp
+        
+        # Fallback to sdnext
         sdreq = _call_sdnext()
         if sdreq.get("error"):
-            return {"ok": False, "error": "Image generation unavailable (no local SDXL or SD.Next disabled)."}
+            # If local failed and sdnext is disabled, return the local error.
+            return local_resp
+        
+        logging.getLogger("mycandy.core").info("Local SDXL failed, falling back to SD.Next...")
         return await _do_sdnext_call(sdreq)
+
 
     async def generate_video(
         self,
