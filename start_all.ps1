@@ -61,6 +61,14 @@ Start-Process powershell -ArgumentList @(
     "cd `"$root`"; `"$venvPy`" backend/tts_server.py"
 )
 
+# NEU: ComfyUI Server Start
+$comfyUIRoot = Join-Path $root "ComfyUI"
+Start-Process powershell -ArgumentList @(
+    "-NoExit",
+    "-Command",
+    "cd `"$comfyUIRoot`"; `"$venvPy`" main.py --listen --oneapi-device-selector auto"
+)
+
 # Frontend: Wir serven das gebaute UI über das Backend (Port 8000), kein Vite-Devserver nötig.
 # Falls noch alte node-Prozesse laufen, beenden.
 $nodeProcs = Get-Process node -ErrorAction SilentlyContinue
@@ -69,5 +77,5 @@ if ($nodeProcs) { $nodeProcs | Stop-Process -Force -ErrorAction SilentlyContinue
 # Browser öffnen (Backend liefert das UI)
 Start-Process "http://localhost:8000/"
 
-Write-Host "Gestartet: Backend (8000), TTS (8020), ggf. llama.cpp ($($cfg.llm.llama_cpp_server.port))." -ForegroundColor Green
+Write-Host "Gestartet: Backend (8000), TTS (8020), ggf. llama.cpp ($($cfg.llm.llama_cpp_server.port)), ComfyUI (8188)." -ForegroundColor Green
 Write-Host "Falls Ports belegt sind, Prozesse beenden (node/python) und erneut ausführen."
