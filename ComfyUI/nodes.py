@@ -42,9 +42,7 @@ import folder_paths
 import latent_preview
 import node_helpers
 
-# ------------------------------------------------------------------
-# Compatibility-Shim für unterschiedliche comfy.model_management APIs
-# ------------------------------------------------------------------
+# --- Compatibility-Shim für unterschiedliche comfy.model_management APIs ---
 _mm = comfy.model_management
 
 # In manchen Versionen fehlt diese Funktion komplett – dann einfach no-op.
@@ -59,6 +57,41 @@ if not hasattr(_mm, "interrupt_current_processing"):
         return
     _mm.interrupt_current_processing = _noop_interrupt_current_processing
 
+# Manche Versionen haben keine Funktion soft_empty_cache – dann definieren wir eine harmlose.
+if not hasattr(_mm, "soft_empty_cache"):
+    def _noop_soft_empty_cache() -> None:
+        # Auf CPU passiert hier eh nichts; auf CUDA würden wir einfach den Cache leeren.
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+    _mm.soft_empty_cache = _noop_soft_empty_cache
+
+# Einige Versionen haben keine should_use_fp16 – wir entscheiden hier konservativ:
+# auf CPU: niemals fp16, auf CUDA: fp16 ok.
+if not hasattr(_mm, "should_use_fp16"):
+    def _should_use_fp16(device=None, model_params=None, **kwargs) -> bool:
+        try:
+            import torch
+            if device is None:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            if device == "cuda":
+                return True
+        except Exception:
+            pass
+        return False
+    _mm.should_use_fp16 = _should_use_fp16
+
+# Und jetzt auch should_use_bf16 – auf deinem Setup (torch+cpu) IMMER False.
+if not hasattr(_mm, "should_use_bf16"):
+    def _should_use_bf16(device=None, model_params=None, **kwargs) -> bool:
+        # bfloat16 bringt dir auf CPU nichts; also konservativ False.
+        return False
+    _mm.should_use_bf16 = _should_use_bf16
+
+
 # Einige Versionen haben keine eigene InterruptProcessingException-Klasse.
 if not hasattr(_mm, "InterruptProcessingException"):
     class InterruptProcessingException(Exception):
@@ -67,6 +100,8 @@ if not hasattr(_mm, "InterruptProcessingException"):
         """
         pass
     _mm.InterruptProcessingException = InterruptProcessingException
+# --- Ende Compatibility shim ---
+
 
 
 def before_node_execution():
