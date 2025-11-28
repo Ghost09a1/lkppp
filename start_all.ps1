@@ -1,129 +1,88 @@
+# stop on errors
 $ErrorActionPreference = "Stop"
 
-# ------------------------------------------------------------
-# 0) Root & Settings
-# ------------------------------------------------------------
-$root = Split-Path -Parent $MyInvocation.MyCommand.Definition
+# repo root (folder where this script lives)
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
-# Haupt-venv (Backend, TTS)
-$venvPy = Join-Path $root ".venv\Scripts\python.exe"
-if (-not (Test-Path $venvPy)) {
-    Write-Error ".venv\Scripts\python.exe nicht gefunden. Bitte .venv anlegen und Dependencies installieren."
+Write-Host "Repo root: $root"
+
+# prefer Python from venv
+$venvPython = Join-Path $root ".venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+    $python = $venvPython
+    Write-Host "Using venv Python: $python"
+} else {
+    $python = "python"
+    Write-Host "Using system Python"
 }
 
-# Settings laden
-$settingsPath = Join-Path $root "config\settings.json"
-if (-not (Test-Path $settingsPath)) {
-    Write-Error "config\settings.json fehlt."
-}
-$cfg = Get-Content $settingsPath -Raw | ConvertFrom-Json
+function Start-App {
+    param(
+        [string]$Name,
+        [string]$WorkingDirectory,
+        [string]$Arguments
+    )
 
-# Logs-Ordner
-if ($cfg.paths -and $cfg.paths.logs_dir) {
-    $logsDir = Join-Path $root $cfg.paths.logs_dir
-    if (-not (Test-Path $logsDir)) {
-        New-Item -ItemType Directory -Path $logsDir | Out-Null
-    }
-}
-
-$backendHost = if ($cfg.backend_host) { $cfg.backend_host } else { "127.0.0.1" }
-$backendPort = if ($cfg.backend_port) { $cfg.backend_port } else { 8000 }
-
-$uiHost      = if ($cfg.ui_host) { $cfg.ui_host } else { "127.0.0.1" }
-$uiPort      = if ($cfg.ui_port) { $cfg.ui_port } else { $backendPort }
-$openBrowser = $cfg.ui.open_browser
-
-# ------------------------------------------------------------
-# 1) Backend API (FastAPI)
-# ------------------------------------------------------------
-Write-Host "Starte Backend auf $backendHost`:$backendPort ..." -ForegroundColor Cyan
-
-Start-Process -FilePath $venvPy `
-    -WorkingDirectory $root `
-    -ArgumentList @(
-        "-m", "uvicorn", "backend.core:app",
-        "--host", $backendHost,
-        "--port", $backendPort.ToString()
-    ) `
-    -WindowStyle Minimized
-
-# ------------------------------------------------------------
-# 2) TTS-Server (optional)
-# ------------------------------------------------------------
-$media       = $cfg.media
-$ttsEnabled  = $media.tts_enabled
-$ttsPort     = if ($media.tts_port) { $media.tts_port } else { 8020 }
-$ttsModelRel = $media.tts_model_path
-$ttsModelAbs = if ($ttsModelRel) { Join-Path $root $ttsModelRel } else { $null }
-
-if ($ttsEnabled -and $ttsModelAbs -and (Test-Path $ttsModelAbs)) {
-    Write-Host "Starte TTS-Server auf Port $ttsPort ..." -ForegroundColor Cyan
-
-    Start-Process -FilePath $venvPy `
-        -WorkingDirectory $root `
-        -ArgumentList @(
-            "-m", "uvicorn", "backend.tts_server:app",
-            "--host", "127.0.0.1",
-            "--port", $ttsPort.ToString()
-        ) `
-        -WindowStyle Minimized
-}
-else {
-    Write-Host "TTS deaktiviert oder Modell fehlt – TTS-Server wird nicht gestartet." -ForegroundColor Yellow
-}
-
-# ------------------------------------------------------------
-# 3) ComfyUI (eigene venv + DirectML für Intel Arc)
-# ------------------------------------------------------------
-$comfyRoot   = Join-Path $root "ComfyUI"
-$comfyVenvPy = Join-Path $comfyRoot "venv\Scripts\python.exe"
-
-if ($media.comfy_enabled -and (Test-Path $comfyRoot) -and (Test-Path $comfyVenvPy)) {
-
-    # Port aus comfy_host lesen (z.B. http://127.0.0.1:8002)
-    $comfyHost = $media.comfy_host
-    try {
-        $uri = [System.Uri]$comfyHost
-        if ($uri.Port -gt 0) {
-            $comfyPort = $uri.Port
-        }
-        else {
-            $comfyPort = 8188
-        }
-    }
-    catch {
-        $comfyPort = 8188
+    if (-not (Test-Path -LiteralPath $WorkingDirectory)) {
+        Write-Warning "Directory '$WorkingDirectory' for $Name not found - skipping."
+        return
     }
 
-    Write-Host "Starte ComfyUI auf Port $comfyPort (DirectML / Intel Arc)..." -ForegroundColor Cyan
-    Write-Host "ComfyUI-venv: $comfyVenvPy" -ForegroundColor DarkGray
-    Write-Host "torch-directml ist dort ja bereits installiert." -ForegroundColor DarkGray
+    # Befehl, der in der neuen PowerShell ausgeführt wird
+    $psCommand = "Set-Location '$WorkingDirectory'; & '$python' $Arguments"
 
-    Start-Process -FilePath $comfyVenvPy `
-        -WorkingDirectory $comfyRoot `
-        -ArgumentList @(
-            "main.py",
-            "--listen", "127.0.0.1",
-            "--port", $comfyPort.ToString(),
-            "--directml",
-            "--highvram"
-        ) `
-        -WindowStyle Minimized
-}
-else {
-    Write-Host "ComfyUI ist in settings.json deaktiviert oder ComfyUI\venv fehlt – ComfyUI wird nicht gestartet." -ForegroundColor Yellow
+    Write-Host "Starting $Name in separate PowerShell window..."
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", $psCommand
 }
 
-# ------------------------------------------------------------
-# 4) Browser auf UI öffnen
-# ------------------------------------------------------------
-if ($openBrowser) {
-    $url = "http://$uiHost`:$uiPort/"
-    Write-Host "Öffne Browser auf $url ..." -ForegroundColor Green
-    Start-Process $url
+# --- LLM server (llama.cpp) -------------------------------------------------
+
+$llamaExe = Join-Path $root "bins\llama-server.exe"
+if (Test-Path $llamaExe) {
+    $llamaDir   = Split-Path $llamaExe -Parent
+    $modelPath  = Join-Path $root "models\llm\model.gguf"
+
+    if (-not (Test-Path $modelPath)) {
+        Write-Warning "LLM model not found at '$modelPath' - LLM server will probably exit immediately."
+    }
+
+    # Hier Host/Port ggf. an deine config/settings.json anpassen!
+    $llamaArgs = @(
+        "--host", "127.0.0.1",
+        "--port", "8080"
+    )
+    if (Test-Path $modelPath) {
+        $llamaArgs = @("-m", $modelPath) + $llamaArgs
+    }
+
+    Write-Host "Starting LLM server (llama-server.exe)..." -ForegroundColor Green
+    Start-Process -FilePath $llamaExe `
+                  -WorkingDirectory $llamaDir `
+                  -ArgumentList $llamaArgs
+} else {
+    Write-Host "LLM server binary bins\llama-server.exe not found, skipping." -ForegroundColor DarkYellow
+}
+
+
+# 1) MyCandyLocal launcher (starts backend, TTS, etc.)
+Start-App -Name "MyCandyLocal Launcher" -WorkingDirectory $root -Arguments "'app_launcher.py'"
+
+# 2) ComfyUI (optional)
+$comfyDir = Join-Path $root "ComfyUI"
+if (Test-Path (Join-Path $comfyDir "main.py")) {
+    Start-App -Name "ComfyUI" -WorkingDirectory $comfyDir -Arguments "'main.py'"
+} else {
+    Write-Host "ComfyUI not found, skipping."
+}
+
+# 3) RVC WebUI (optional)
+$rvcDir = Join-Path $root "rvc_webui"
+if (Test-Path (Join-Path $rvcDir "infer-web.py")) {
+    Start-App -Name "RVC WebUI" -WorkingDirectory $rvcDir -Arguments "'infer-web.py'"
+} else {
+    Write-Host "RVC WebUI not found, skipping."
 }
 
 Write-Host ""
-Write-Host "Fertig. Backend, (optional) TTS und ComfyUI laufen jetzt." -ForegroundColor Green
-Write-Host "Bei Problemen in die jeweiligen Fenster schauen." -ForegroundColor Green
+Write-Host "Done. Launched all available servers (each in its own PowerShell window)."
