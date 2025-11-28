@@ -108,6 +108,18 @@ if not hasattr(_mm, "should_use_fp16"):
         return torch.cuda.is_available()
     _mm.should_use_fp16 = _should_use_fp16
 
+# Unterstützt das Device einen Cast auf diesen dtype? -------------------------
+if not hasattr(_mm, "supports_cast"):
+    def _supports_cast(device, dtype, *args, **kwargs) -> bool:
+        """
+        In neueren Comfy-Versionen wird geprüft, ob ein sicherer Cast möglich ist.
+        Für dein Setup (CPU, float32) ist Cast immer ok, also True zurückgeben.
+        """
+        return True
+
+    _mm.supports_cast = _supports_cast
+
+
 if not hasattr(_mm, "should_use_bf16"):
     def _should_use_bf16(device=None, model_params=None, prioritize_performance=True, manual_cast: bool = False, **kwargs) -> bool:
         # bf16 auf deinem Setup vorsichtshalber aus
