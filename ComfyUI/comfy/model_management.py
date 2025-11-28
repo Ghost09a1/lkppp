@@ -1187,3 +1187,10 @@ if "cast_to_device" not in globals():
         """
         return cast_to(tensor, dtype=dtype, device=device,
                        non_blocking=False, copy=copy)
+
+# -------- Anzahl der Streams für das Offload-System -------------------------
+
+# Fallback-Wert für ältere / gepatchte Setups.
+# Auf CPU/XPU reicht 1 Stream locker aus.
+if "NUM_STREAMS" not in globals():
+    NUM_STREAMS = 1
