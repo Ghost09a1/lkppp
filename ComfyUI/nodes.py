@@ -134,6 +134,42 @@ if not hasattr(_mm, "xformers_enabled_vae"):
         return False
     _mm.xformers_enabled_vae = _xformers_enabled_vae
 
+# Device-Helfer (CPU / MPS) ---------------------------------------------------
+if not hasattr(_mm, "is_device_cpu"):
+    def _is_device_cpu(device) -> bool:
+        """
+        Bestimmt, ob ein Device eine CPU ist.
+        Wird z.B. in text_encoder_dtype(...) verwendet.
+        """
+        try:
+            import torch
+            dev = torch.device(device) if not isinstance(device, torch.device) else device
+            return dev.type == "cpu"
+        except Exception:
+            # Fallback bei Strings wie "cpu" / "cpu:0"
+            if isinstance(device, str) and "cpu" in device.lower():
+                return True
+            return False
+    _mm.is_device_cpu = _is_device_cpu
+
+if not hasattr(_mm, "is_device_mps"):
+    def _is_device_mps(device) -> bool:
+        """
+        Entspricht der MPS-Variante für Apple-GPUs.
+        Auf deinem Setup (Windows + CPU/ARC) wird das praktisch nie benutzt,
+        aber wir definieren es sauber.
+        """
+        try:
+            import torch
+            dev = torch.device(device) if not isinstance(device, torch.device) else device
+            return dev.type == "mps"
+        except Exception:
+            if isinstance(device, str) and "mps" in device.lower():
+                return True
+            return False
+    _mm.is_device_mps = _is_device_mps
+
+
 # PyTorch-Attention für VAE ---------------------------------------------------
 if not hasattr(_mm, "pytorch_attention_enabled_vae"):
     def _pytorch_attention_enabled_vae() -> bool:
