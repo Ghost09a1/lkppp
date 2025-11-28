@@ -15,7 +15,7 @@ from typing_extensions import override
 import folder_paths
 from comfy_api.latest import IO, ComfyExtension, Input
 from comfy_api.util import VideoCodec, VideoContainer
-from comfy_api_nodes.apis.gemini_api import (
+from comfy_api_nodes_DISABLED.apis.gemini_api import (
     GeminiContent,
     GeminiFileData,
     GeminiGenerateContentRequest,
@@ -29,7 +29,7 @@ from comfy_api_nodes.apis.gemini_api import (
     GeminiRole,
     Modality,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     audio_to_base64_string,
     bytesio_to_image_tensor,

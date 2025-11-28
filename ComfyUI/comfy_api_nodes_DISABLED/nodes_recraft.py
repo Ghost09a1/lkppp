@@ -8,7 +8,7 @@ from typing_extensions import override
 
 from comfy.utils import ProgressBar
 from comfy_api.latest import IO, ComfyExtension
-from comfy_api_nodes.apis.recraft_api import (
+from comfy_api_nodes_DISABLED.apis.recraft_api import (
     RecraftColor,
     RecraftColorChain,
     RecraftControls,
@@ -21,7 +21,7 @@ from comfy_api_nodes.apis.recraft_api import (
     RecraftStyleV3,
     get_v3_substyles,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     bytesio_to_image_tensor,
     download_url_as_bytesio,

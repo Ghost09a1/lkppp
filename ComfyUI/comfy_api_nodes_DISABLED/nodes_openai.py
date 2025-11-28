@@ -11,7 +11,7 @@ from comfy_api.latest import IO, ComfyExtension
 from typing_extensions import override
 
 
-from comfy_api_nodes.apis import (
+from comfy_api_nodes_DISABLED.apis import (
     OpenAIImageGenerationRequest,
     OpenAIImageEditRequest,
     OpenAIImageGenerationResponse,
@@ -29,7 +29,7 @@ from comfy_api_nodes.apis import (
     InputFileContent,
 )
 
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     downscale_image_tensor,
     download_url_to_bytesio,
     validate_string,

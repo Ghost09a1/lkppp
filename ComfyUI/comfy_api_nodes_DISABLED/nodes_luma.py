@@ -4,7 +4,7 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import IO, ComfyExtension
-from comfy_api_nodes.apis.luma_api import (
+from comfy_api_nodes_DISABLED.apis.luma_api import (
     LumaAspectRatio,
     LumaCharacterRef,
     LumaConceptChain,
@@ -24,7 +24,7 @@ from comfy_api_nodes.apis.luma_api import (
     LumaVideoOutputResolution,
     get_luma_concepts,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     download_url_to_image_tensor,
     download_url_to_video_output,

@@ -11,7 +11,7 @@ from typing_extensions import override
 
 import torch
 
-from comfy_api_nodes.apis import (
+from comfy_api_nodes_DISABLED.apis import (
     KlingCameraControl,
     KlingCameraConfig,
     KlingCameraControlType,
@@ -48,7 +48,7 @@ from comfy_api_nodes.apis import (
     KlingCharacterEffectModelName,
     KlingSingleImageEffectModelName,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     validate_image_dimensions,
     validate_image_aspect_ratio,
     validate_video_dimensions,

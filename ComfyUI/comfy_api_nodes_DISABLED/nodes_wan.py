@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from typing_extensions import override
 
 from comfy_api.latest import IO, ComfyExtension, Input
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     audio_to_base64_string,
     download_url_to_image_tensor,

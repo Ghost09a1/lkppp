@@ -1,7 +1,8 @@
 # Prevent custom nodes from hooking anything important
 import comfy.model_management
 
-HOOK_BREAK = [(comfy.model_management, "cast_to")]
+# KORRIGIERT: 'cast_to' entfernt, da es in neueren Versionen nicht existiert.
+HOOK_BREAK = []
 
 
 SAVED_FUNCTIONS = []

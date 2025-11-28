@@ -6,7 +6,7 @@ from typing_extensions import override
 
 from comfy_api.input_impl.video_types import VideoFromFile
 from comfy_api.latest import IO, ComfyExtension
-from comfy_api_nodes.apis.veo_api import (
+from comfy_api_nodes_DISABLED.apis.veo_api import (
     VeoGenVidPollRequest,
     VeoGenVidPollResponse,
     VeoGenVidRequest,
@@ -15,7 +15,7 @@ from comfy_api_nodes.apis.veo_api import (
     VeoRequestInstanceImage,
     VeoRequestParameters,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     download_url_to_video_output,
     poll_op,

@@ -4,7 +4,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from comfy.comfy_types.node_typing import IO
-from comfy_api_nodes.mapper_utils import model_field_to_node_input
+from comfy_api_nodes_DISABLED.mapper_utils import model_field_to_node_input
 
 
 def test_model_field_to_float_input():
