@@ -17,7 +17,7 @@ from enum import Enum
 
 import torch
 
-from comfy_api_nodes.apis import (
+from comfy_api_nodes_DISABLED.apis import (
     RunwayImageToVideoRequest,
     RunwayImageToVideoResponse,
     RunwayTaskStatusResponse as TaskStatusResponse,
@@ -32,7 +32,7 @@ from comfy_api_nodes.apis import (
     ReferenceImage,
     RunwayTextToImageAspectRatioEnum,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     image_tensor_pair_to_batch,
     validate_string,
     validate_image_dimensions,

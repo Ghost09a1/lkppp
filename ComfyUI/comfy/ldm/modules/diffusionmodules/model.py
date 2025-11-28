@@ -9,7 +9,7 @@ from comfy import model_management
 import comfy.ops
 ops = comfy.ops.disable_weight_init
 
-if model_management.xformers_enabled_vae():
+if model_management.XFORMERS_IS_AVAILABLE:
     import xformers
     import xformers.ops
 

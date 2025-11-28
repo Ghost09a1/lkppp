@@ -4,7 +4,7 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import IO, ComfyExtension
-from comfy_api_nodes.apis.minimax_api import (
+from comfy_api_nodes_DISABLED.apis.minimax_api import (
     MinimaxFileRetrieveResponse,
     MiniMaxModel,
     MinimaxTaskResultResponse,
@@ -12,7 +12,7 @@ from comfy_api_nodes.apis.minimax_api import (
     MinimaxVideoGenerationResponse,
     SubjectReferenceItem,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     download_url_to_video_output,
     poll_op,

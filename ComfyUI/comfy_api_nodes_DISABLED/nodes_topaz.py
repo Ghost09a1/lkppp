@@ -6,8 +6,8 @@ import torch
 from typing_extensions import override
 
 from comfy_api.latest import IO, ComfyExtension, Input
-from comfy_api_nodes.apis import topaz_api
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.apis import topaz_api
+from comfy_api_nodes_DISABLED.util import (
     ApiEndpoint,
     download_url_to_image_tensor,
     download_url_to_video_output,

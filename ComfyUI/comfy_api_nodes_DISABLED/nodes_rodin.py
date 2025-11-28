@@ -14,7 +14,7 @@ from typing import Optional
 from io import BytesIO
 from typing_extensions import override
 from PIL import Image
-from comfy_api_nodes.apis.rodin_api import (
+from comfy_api_nodes_DISABLED.apis.rodin_api import (
     Rodin3DGenerateRequest,
     Rodin3DGenerateResponse,
     Rodin3DCheckStatusRequest,
@@ -23,7 +23,7 @@ from comfy_api_nodes.apis.rodin_api import (
     Rodin3DDownloadResponse,
     JobStatus,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     sync_op,
     poll_op,
     ApiEndpoint,

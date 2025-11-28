@@ -3,7 +3,7 @@ from typing import Optional
 from typing_extensions import override
 
 from comfy_api.latest import ComfyExtension, Input, IO
-from comfy_api_nodes.apis.stability_api import (
+from comfy_api_nodes_DISABLED.apis.stability_api import (
     StabilityUpscaleConservativeRequest,
     StabilityUpscaleCreativeRequest,
     StabilityAsyncResponse,
@@ -20,7 +20,7 @@ from comfy_api_nodes.apis.stability_api import (
     StabilityAudioInpaintRequest,
     StabilityAudioResponse,
 )
-from comfy_api_nodes.util import (
+from comfy_api_nodes_DISABLED.util import (
     validate_audio_duration,
     validate_string,
     audio_input_to_mp3,
