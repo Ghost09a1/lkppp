@@ -11,3 +11,9 @@ librosa
 yt-dlp
 faster-whisper
 openai-whisper
+torch>=2.1.0
+diffusers>=0.27.0
+transformers>=4.38.0
+accelerate>=0.27.0
+safetensors>=0.4.2
+pillow>=10.0.0
