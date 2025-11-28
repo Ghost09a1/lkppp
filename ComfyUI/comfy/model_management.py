@@ -32,25 +32,25 @@ import gc
 # ---------------------------------------------------------------------------
 
 def is_device_type(device, dev_type: str) -> bool:
-    """
-    Normalisiert Geräteangaben:
-    - device kann torch.device oder ein String wie "cpu" sein
-    """
-    if hasattr(device, "type"):
-        return device.type == dev_type
-    return str(device) == dev_type
+	"""
+	Normalisiert Geräteangaben:
+	- device kann torch.device oder ein String wie "cpu" sein
+	"""
+	if hasattr(device, "type"):
+		return device.type == dev_type
+	return str(device) == dev_type
 
 
 def is_device_cpu(device) -> bool:
-    return is_device_type(device, "cpu")
+	return is_device_type(device, "cpu")
 
 
 def is_device_mps(device) -> bool:
-    return is_device_type(device, "mps")
+	return is_device_type(device, "mps")
 
 
 def is_device_cuda(device) -> bool:
-    return is_device_type(device, "cuda")
+	return is_device_type(device, "cuda")
 
 
 class VRAMState(Enum):
@@ -211,11 +211,11 @@ def get_torch_device():
 		elif is_mlu():
 			return torch.device("mlu", torch.mlu.current_device())
 		else:
-			# KORREKTUR: Explizite Prüfung, ob CUDA verfügbar ist, bevor .current_device() aufgerufen wird,
-			# da dies der Punkt ist, an dem PyTorch ohne CUDA fehlschlägt.
+			# Explizite Prüfung, ob CUDA verfügbar ist,
+			# bevor current_device() aufgerufen wird.
 			if torch.cuda.is_available():
 				return torch.device(torch.cuda.current_device())
-			# FALLBACK, falls keine unterstützte GPU/XPU gefunden wurde, aber GPU-Modus gewünscht ist
+			# Fallback, falls keine unterstützte GPU/XPU vorhanden
 			return torch.device("cpu")
 
 def get_total_memory(dev=None, torch_total_too=False):
@@ -257,7 +257,7 @@ def get_total_memory(dev=None, torch_total_too=False):
 				mem_total_torch = mem_reserved
 				mem_total = mem_total_cuda
 			else:
-				# Wenn keine dedizierte Hardware erkannt wird (einschließlich des Patches oben)
+				# Wenn keine dedizierte Hardware erkannt wird
 				mem_total = psutil.virtual_memory().total
 				mem_total_torch = mem_total
 
@@ -735,7 +735,7 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
 			if lowvram_model_memory == 0:
 				lowvram_model_memory = 0.1
 
-		if vram_set_state == VRAMState.NO_VRAM:
+		if vram_state == VRAMState.NO_VRAM:
 			lowvram_model_memory = 0.1
 
 		loaded_model.model_load(lowvram_model_memory, force_patch_weights=force_patch_weights)
@@ -991,208 +991,120 @@ def get_autocast_device(dev):
 		return dev.type
 	return "cuda"
 
-def supports_dtype(device, dtype): #TODO
+def supports_dtype(device, dtype): # ursprünglicher Platzhalter, wird unten überschrieben
 	if dtype == torch.float32:
 		return True
 	if is_device_cpu(device):
 		return False
 
-# ---------------------------------------------------------------------------
-# MyCandy / ARC compatibility shim for neueres ComfyUI
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# MyCandy / Arc compatibility shim for CPU-only / DirectML / Arc builds
+# MyCandy / ComfyUI Kompatibilitäts-Shim (CPU / Arc / DirectML freundlich)
 # ---------------------------------------------------------------------------
 
-import torch as _torch  # Alias, damit wir nicht mit dem oberen Import kollidieren
-
+import torch as _torch  # Alias zum Original-import
 
 def device_supports_non_blocking(device):
-    """
-    Vorsichtige Default-Einstellung:
-    - Auf reinen CPU-Builds / DirectML / XPU => False
-    - Non-blocking Copies lohnen sich dort eh nicht.
-    """
-    try:
-        if _torch.cuda.is_available():
-            dev_type = getattr(device, "type", str(device))
-            return dev_type == "cuda"
-    except Exception:
-        pass
-    return False
+	"""
+	Auf CPU / DirectML / XPU lohnt sich non_blocking nicht wirklich.
+	Wir aktivieren es nur auf CUDA-Geräten.
+	"""
+	try:
+		if _torch.cuda.is_available():
+			dev_type = getattr(device, "type", str(device))
+			return dev_type == "cuda"
+	except Exception:
+		pass
+	return False
 
 
 def device_should_use_non_blocking(device):
-    """
-    Neuere ComfyUI-Versionen fragen diese Funktion ab.
-    Wir leiten einfach auf device_supports_non_blocking weiter.
-    """
-    return device_supports_non_blocking(device)
+	return device_supports_non_blocking(device)
+
+
+def xformers_enabled_vae():
+	"""Wir nutzen im VAE keine xformers-Optimierung in diesem Setup."""
+	return False
+
+
+def pytorch_attention_enabled_vae():
+	"""
+	Neuere ComfyUI-Versionen fragen das ab.
+	Wir orientieren uns am globalen ENABLE_PYTORCH_ATTENTION,
+	fallen aber zur Not auf True zurück (reine PyTorch-Attention).
+	"""
+	try:
+		return ENABLE_PYTORCH_ATTENTION
+	except NameError:
+		return True
+
+
+def supports_dtype(device, dtype):
+	"""
+	Konservative Dtype-Unterstützung:
+	- float32 geht immer
+	- auf CPU kein fp16/bf16
+	- auf GPU/XPU erlauben wir fp16/bf16
+	"""
+	if dtype == _torch.float32:
+		return True
+
+	dev_type = getattr(device, "type", str(device))
+	if dev_type == "cpu":
+		return False
+
+	allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
+	allowed.discard(None)
+	return dtype in allowed
+
+
+def supports_cast(device, dtype):
+	return supports_dtype(device, dtype)
 
 
 def force_channels_last():
-    """
-    Channels-last Layout bringt auf CPU selten Vorteile,
-    darum bleiben wir konservativ bei False.
-    """
-    return False
+	"""
+	Channels-last Layout nur relevant für GPU-Optimierung.
+	Auf CPU bleiben wir bei False.
+	"""
+	return False
 
 
-def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False):
-    """
-    Vereinfachte Variante von ComfyUIs cast_to, ohne GPU-Spezialpfade.
-    Reicht völlig für CPU / DirectML / Arc.
-    """
-    target_device = device or weight.device
-    target_dtype = dtype or weight.dtype
+def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False, stream=None):
+	"""
+	Kompatible Version von ComfyUIs cast_to:
 
-    # Nichts zu tun, alles schon am Ziel
-    if (not copy
-        and target_device == weight.device
-        and target_dtype == weight.dtype):
-        return weight
+	- Akzeptiert "stream" (wird auf CPU ignoriert)
+	- Ignoriert non_blocking auf Nicht-CUDA-Geräten
+	- Führt den eigentlichen .to()-Cast aus
+	"""
+	target_device = device or weight.device
+	target_dtype = dtype or weight.dtype
 
-    return weight.to(device=target_device, dtype=target_dtype, copy=copy)
+	# Nichts zu tun, alles schon passend
+	if (not copy
+		and target_device == weight.device
+		and target_dtype == weight.dtype):
+		return weight
+
+	# Für CPU ignorieren wir non_blocking/stream komplett
+	return weight.to(device=target_device, dtype=target_dtype, copy=copy)
 
 
 def cast_to_device(tensor, device, dtype, copy=False):
-    """
-    Helper, den comfy.ops aufruft.
-    Wir erzwingen non_blocking=False, damit es auf allen Backends sicher ist.
-    """
-    return cast_to(tensor, dtype=dtype, device=device,
-                   non_blocking=False, copy=copy)
+	"""
+	Helper, den comfy.ops und andere Module verwenden.
+	"""
+	nb = device_supports_non_blocking(device)
+	return cast_to(
+		tensor,
+		dtype=dtype,
+		device=device,
+		non_blocking=nb,
+		copy=copy,
+		stream=None,
+	)
 
 
-# ---------------------------------------------------------------------------
-# MyCandy / ComfyUI Kompatibilitäts-Shim
-#
-# Diesen Block ans ENDE von comfy/model_management.py setzen.
-# Er ergänzt nur fehlende Funktionen für neuere ComfyUI-Versionen,
-# ohne bestehende Definitionen zu überschreiben.
-# ---------------------------------------------------------------------------
-
-import torch as _torch  # Alias, um Konflikte mit dem oberen "import torch" zu vermeiden
-
-# -------- non-blocking / Device-Helper --------------------------------------
-
-if "device_supports_non_blocking" not in globals():
-    def device_supports_non_blocking(device):
-        """
-        Auf CPU/DirectML/Arc machen non-blocking Copies keinen echten Sinn.
-        -> Standardmäßig nur auf CUDA-Geräten aktivieren.
-        """
-        try:
-            if _torch.cuda.is_available():
-                dev_type = getattr(device, "type", str(device))
-                return dev_type == "cuda"
-        except Exception:
-            pass
-        return False
-
-
-if "device_should_use_non_blocking" not in globals():
-    def device_should_use_non_blocking(device):
-        return device_supports_non_blocking(device)
-
-
-# -------- VAE-Attention-Flags -----------------------------------------------
-
-if "xformers_enabled_vae" not in globals():
-    def xformers_enabled_vae():
-        """
-        In diesem Setup gehen wir davon aus, dass kein xformers im VAE benutzt wird.
-        """
-        return False
-
-
-if "pytorch_attention_enabled_vae" not in globals():
-    def pytorch_attention_enabled_vae():
-        """
-        Für CPU-/DirectML-/Arc-Builds nutzen wir immer PyTorch-Attention im VAE.
-        """
-        return True
-
-
-# -------- Dtype-Support-Helper ----------------------------------------------
-
-if "supports_dtype" not in globals():
-    def supports_dtype(device, dtype):
-        """
-        Konservative Dtype-Unterstützung:
-
-        * float32 geht überall
-        * auf CPU vermeiden wir standardmäßig float16/bfloat16
-        * auf GPU/anderen Geräten erlauben wir float16/bfloat16
-        """
-        if dtype == _torch.float32:
-            return True
-
-        dev_type = getattr(device, "type", str(device))
-        if dev_type == "cpu":
-            return False
-
-        allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
-        allowed.discard(None)
-        return dtype in allowed
-
-
-if "supports_cast" not in globals():
-    def supports_cast(device, dtype):
-        """
-        Wird z.B. von comfy.ops / CLIP benutzt.
-        """
-        return supports_dtype(device, dtype)
-
-
-# -------- Layout / channels_last --------------------------------------------
-
-if "force_channels_last" not in globals():
-    def force_channels_last():
-        """
-        channels_last bringt auf GPU manchmal Speed,
-        auf CPU lassen wir das vorsichtshalber aus.
-        """
-        return False
-
-
-# -------- Casting-Helper, die comfy.ops erwartet ----------------------------
-
-if "cast_to" not in globals():
-    def cast_to(weight, dtype=None, device=None,
-                non_blocking=False, copy=False, stream=None):
-        """
-        Vereinfachte Variante von ComfyUIs cast_to:
-
-        * ignoriert non_blocking und stream auf CPU/DirectML/XPU
-        * castet auf gewünschtes Device + Dtype
-        """
-        target_device = device or weight.device
-        target_dtype = dtype or weight.dtype
-
-        # Nichts zu tun, alles schon richtig
-        if (not copy
-            and target_device == weight.device
-            and target_dtype == weight.dtype):
-            return weight
-
-        # non_blocking/stream werden hier absichtlich ignoriert
-        return weight.to(device=target_device, dtype=target_dtype, copy=copy)
-
-
-
-if "cast_to_device" not in globals():
-    def cast_to_device(tensor, device, dtype, copy=False):
-        """
-        Helper, den comfy.ops aufruft.
-        """
-        return cast_to(tensor, dtype=dtype, device=device,
-                       non_blocking=False, copy=copy)
-
-# -------- Anzahl der Streams für das Offload-System -------------------------
-
-# Fallback-Wert für ältere / gepatchte Setups.
-# Auf CPU/XPU reicht 1 Stream locker aus.
-if "NUM_STREAMS" not in globals():
-    NUM_STREAMS = 1
+# Anzahl der Streams für das Offload-System (wird in model_patcher.py genutzt)
+NUM_STREAMS = 1
