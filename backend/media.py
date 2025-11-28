@@ -8,6 +8,7 @@ import subprocess
 import uuid
 import tempfile
 import logging
+import json
 
 import httpx
 import torch
@@ -140,6 +141,124 @@ class MediaRouter:
                 self._svd_pipe = None
                 return None
 
+    async def _generate_image_comfy(
+        self,
+        prompt: str,
+        negative: str,
+        steps: int,
+        width: int,
+        height: int,
+    ) -> Dict[str, Any]:
+        """
+        Generate an image via a ComfyUI workflow.
+
+        Expected config['media'] keys:
+          - comfy_enabled: bool
+          - comfy_host: base URL, e.g. 'http://127.0.0.1:8002'
+          - comfy_workflow_path: relative path to workflow JSON,
+            e.g. 'comfy_workflows/txt2img_api.json'
+
+        The workflow JSON should contain placeholders:
+          {{prompt}}, {{negative}}, {{steps}}, {{width}}, {{height}}
+        which will be replaced before sending to ComfyUI.
+        """
+        media_cfg = self.config.get("media", {})
+        if not media_cfg.get("comfy_enabled", False):
+            return {"ok": False, "error": "ComfyUI disabled in config."}
+
+        base_url = (media_cfg.get("comfy_host") or "http://127.0.0.1:8188").rstrip("/")
+        workflow_path = media_cfg.get("comfy_workflow_path") or "comfy_workflows/txt2img_api.json"
+
+        # Workflow-Datei relativ zum Projekt-Root laden
+        root = Path(__file__).resolve().parent.parent
+        wf_file = root / workflow_path
+        if not wf_file.exists():
+            return {"ok": False, "error": f"Comfy workflow file not found: {wf_file}"}
+
+        try:
+            wf = json.loads(wf_file.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return {"ok": False, "error": f"Invalid Comfy workflow JSON: {exc}"}
+
+        # Platzhalter im Workflow ersetzen
+        def replace_placeholders(obj):
+            if isinstance(obj, dict):
+                return {k: replace_placeholders(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [replace_placeholders(v) for v in obj]
+            if isinstance(obj, str):
+                mapping = {
+                    "{{prompt}}": prompt,
+                    "{{negative}}": negative,
+                    "{{steps}}": steps,
+                    "{{width}}": width,
+                    "{{height}}": height,
+                }
+                return mapping.get(obj, obj)
+            return obj
+
+        wf = replace_placeholders(wf)
+        client_id = str(uuid.uuid4())
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            # Prompt an Comfy senden
+            try:
+                r = await client.post(
+                    f"{base_url}/prompt",
+                    json={"prompt": wf, "client_id": client_id},
+                )
+                r.raise_for_status()
+                data = r.json()
+                prompt_id = data.get("prompt_id") or client_id
+            except Exception as exc:
+                return {"ok": False, "error": f"Error sending prompt to ComfyUI: {exc}"}
+
+            images_b64: list[str] = []
+
+            # Auf Ergebnis warten (polling über /history)
+            for _ in range(120):  # ~120 Sekunden
+                await asyncio.sleep(1.0)
+                try:
+                    h = await client.get(f"{base_url}/history/{prompt_id}")
+                    if h.status_code == 404:
+                        continue
+                    h.raise_for_status()
+                    hist = h.json()
+                except Exception:
+                    continue
+
+                # history kann zwei Formen haben:
+                # 1) {'outputs': {...}}
+                # 2) {'<prompt_id>': {'outputs': {...}}}
+                if isinstance(hist, dict) and "outputs" in hist:
+                    outputs = hist["outputs"]
+                else:
+                    first = next(iter(hist.values()), None) if hist else None
+                    outputs = (first or {}).get("outputs", {})
+
+                for node_output in outputs.values():
+                    for img_info in node_output.get("images", []):
+                        filename = img_info.get("filename")
+                        subfolder = img_info.get("subfolder", "")
+                        if not filename:
+                            continue
+                        v = await client.get(
+                            f"{base_url}/view",
+                            params={
+                                "filename": filename,
+                                "subfolder": subfolder,
+                                "type": "output",
+                            },
+                        )
+                        v.raise_for_status()
+                        b64 = base64.b64encode(v.content).decode("utf-8")
+                        images_b64.append(b64)
+
+                if images_b64:
+                    return {"ok": True, "images_base64": images_b64}
+
+            return {"ok": False, "error": "Timed out waiting for ComfyUI result."}
+
     async def generate_image(
         self,
         prompt: str,
@@ -214,6 +333,15 @@ class MediaRouter:
 
                 return {"ok": False, "error": f"Local SDXL failed due to an unexpected error: {exc}"}
 
+        async def _comfy() -> Dict[str, Any]:
+            return await self._generate_image_comfy(
+                prompt=prompt,
+                negative=negative,
+                steps=steps,
+                width=width,
+                height=height,
+            )
+
         if mode == "sdnext":
             sdreq = _call_sdnext()
             if sdreq.get("error"):
@@ -223,20 +351,30 @@ class MediaRouter:
         if mode == "local":
             return await _local_sdxl()
 
+        if mode == "comfy":
+            return await _comfy()
+
         # Auto mode
+
+        # 1) Erst Comfy versuchen, wenn aktiviert
+        if self.config["media"].get("comfy_enabled"):
+            comfy_resp = await _comfy()
+            if comfy_resp.get("ok"):
+                return comfy_resp
+
+        # 2) Dann lokales SDXL
         local_resp = await _local_sdxl()
         if local_resp.get("ok"):
             return local_resp
-        
-        # Fallback to sdnext
+
+        # 3) Fallback zu SD.Next
         sdreq = _call_sdnext()
         if sdreq.get("error"):
-            # If local failed and sdnext is disabled, return the local error.
-            return local_resp
-        
-        logging.getLogger("mycandy.core").info("Local SDXL failed, falling back to SD.Next...")
-        return await _do_sdnext_call(sdreq)
+            # Wenn alles scheitert, gib den letzten sinnvollen Fehler zurück
+            return local_resp if local_resp.get("error") else sdreq
 
+        logging.getLogger("mycandy.core").info("Local/Comfy failed, falling back to SD.Next...")
+        return await _do_sdnext_call(sdreq)
 
     async def generate_video(
         self,
