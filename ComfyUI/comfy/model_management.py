@@ -972,74 +972,85 @@ def supports_dtype(device, dtype): #TODO
 		return False
 
 # ---------------------------------------------------------------------------
-# MyCandy / ARC compatibility shim for newer ComfyUI versions
-# Ergänzt Hilfsfunktionen, die von neueren Modulen erwartet werden.
+# MyCandy / ARC compatibility shim for neueres ComfyUI
 # ---------------------------------------------------------------------------
 
 import torch as _torch
 
 def supports_dtype(device, dtype):
-    """Konservative Variante von supports_dtype.
+	"""Konservative Variante von supports_dtype.
 
-    * float32 geht überall
-    * auf CPU lassen wir half/bf16 vorsichtshalber nicht zu
-    * auf GPU / DirectML erlauben wir float16 und bfloat16
-    """
-    if dtype == _torch.float32:
-        return True
+	* float32 geht überall
+	* auf CPU lassen wir half/bf16 vorsichtshalber nicht zu
+	* auf GPU / DirectML erlauben wir float16 und bfloat16
+	"""
+	if dtype == _torch.float32:
+		return True
 
-    dev_type = getattr(device, "type", str(device))
-    if dev_type == "cpu":
-        return False
+	dev_type = getattr(device, "type", str(device))
+	if dev_type == "cpu":
+		return False
 
-    allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
-    allowed.discard(None)
-    return dtype in allowed
+	allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
+	allowed.discard(None)
+	return dtype in allowed
 
 def supports_cast(device, dtype):
-    """Nutzt dieselbe Logik wie supports_dtype.
-
-    Wird u.a. von CLIP/TE genutzt, um zu entscheiden, ob der Cast
-    auf dem jeweiligen Device überhaupt erlaubt ist.
-    """
-    return supports_dtype(device, dtype)
+	"""Nutzt dieselbe Logik wie supports_dtype."""
+	return supports_dtype(device, dtype)
 
 def xformers_enabled_vae():
-    """In deinem Setup ist xformers nicht installiert -> immer False."""
-    return False
+	"""In deinem Setup ist xformers nicht installiert -> immer False."""
+	return False
 
 def pytorch_attention_enabled_vae():
-    """Wir nutzen standardmäßig die PyTorch-Attention im VAE."""
-    return True
+	"""Wir nutzen standardmäßig die PyTorch-Attention im VAE."""
+	return True
 
 def force_channels_last():
-    """Channels-last Layout ist hauptsächlich für GPU-Optimierung.
+	"""Channels-last Layout ist hauptsächlich für GPU-Optimierung.
 
-    Auf CPU eher überflüssig – daher hier konservativ False.
-    """
-    return False
+	Auf CPU eher überflüssig – daher hier konservativ False.
+	"""
+	return False
 
 # Anzahl der Streams, die das Offload-System benutzen darf.
-# Für CPU / DirectML ist 1 sehr konservativ und sicher.
 NUM_STREAMS = 1
 
 # --- compatibility helpers, falls in dieser älteren Version noch fehlen ---
 
 if 'is_device_type' not in globals():
-    def is_device_type(device, dev_type: str) -> bool:
-        # device kann torch.device oder String wie "cpu" sein
-        if hasattr(device, "type"):
-            return device.type == dev_type
-        return str(device) == dev_type
+	def is_device_type(device, dev_type: str) -> bool:
+		# device kann torch.device oder String wie "cpu" sein
+		if hasattr(device, "type"):
+			return device.type == dev_type
+		return str(device) == dev_type
 
 if 'is_device_cpu' not in globals():
-    def is_device_cpu(device) -> bool:
-        return is_device_type(device, "cpu")
+	def is_device_cpu(device) -> bool:
+		return is_device_type(device, "cpu")
 
 if 'is_device_mps' not in globals():
-    def is_device_mps(device) -> bool:
-        return is_device_type(device, "mps")
+	def is_device_mps(device) -> bool:
+		return is_device_type(device, "mps")
 
 if 'is_device_cuda' not in globals():
-    def is_device_cuda(device) -> bool:
-        return is_device_type(device, "cuda")
+	def is_device_cuda(device) -> bool:
+		return is_device_type(device, "cuda")
+
+# --- NEU: Stubs für non_blocking-Unterstützung -----------------------------
+
+def device_supports_non_blocking(device):
+	"""
+	Kompatibilitäts-Stub für comfy.ops.cast_bias_weight().
+	Auf CPU/XPU ist non_blocking nicht wichtig -> immer False.
+	"""
+	return False
+
+def device_should_use_non_blocking(device):
+	"""
+	Manche neueren Nodes rufen diese Helper-Funktion auf.
+	Wir leiten einfach auf device_supports_non_blocking weiter.
+	"""
+	return device_supports_non_blocking(device)
+a
