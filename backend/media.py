@@ -1,9 +1,17 @@
 import base64
 from pathlib import Path
+import io
 from typing import Any, Dict, Optional
 import asyncio
+import base64
+import subprocess
+import uuid
+import tempfile
 
 import httpx
+import torch
+from PIL import Image
+from diffusers import StableDiffusionXLPipeline, StableVideoDiffusionPipeline
 
 
 class MediaRouter:
@@ -13,6 +21,12 @@ class MediaRouter:
         self._fw_model = None
         self._fw_lock = asyncio.Lock()
         self._whisper = None
+        self._sd_pipe: StableDiffusionXLPipeline | None = None
+        self._svd_pipe: StableVideoDiffusionPipeline | None = None
+        self._sd_lock = asyncio.Lock()
+        self._svd_lock = asyncio.Lock()
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 
     async def tts(self, text: str, character: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self.config["media"].get("tts_enabled"):
@@ -34,6 +48,59 @@ class MediaRouter:
             except Exception as exc:
                 return {"ok": False, "error": f"TTS service unavailable: {exc}"}
 
+    async def _ensure_sdxl(self) -> StableDiffusionXLPipeline | None:
+        if self._sd_pipe is not None:
+            return self._sd_pipe
+        async with self._sd_lock:
+            if self._sd_pipe is not None:
+                return self._sd_pipe
+            model_path = (self.config["media"].get("sdxl_model_path") or "").strip()
+            if not model_path or not Path(model_path).exists():
+                return None
+            try:
+                pipe = StableDiffusionXLPipeline.from_single_file(
+                    model_path,
+                    torch_dtype=self._torch_dtype,
+                )
+                pipe.enable_attention_slicing()
+                if self._device == "cuda":
+                    pipe = pipe.to(self._device)
+                    try:
+                        pipe.enable_xformers_memory_efficient_attention()
+                    except Exception:
+                        pass
+                self._sd_pipe = pipe
+                return pipe
+            except Exception:
+                self._sd_pipe = None
+                return None
+
+    async def _ensure_svd(self) -> StableVideoDiffusionPipeline | None:
+        if self._svd_pipe is not None:
+            return self._svd_pipe
+        async with self._svd_lock:
+            if self._svd_pipe is not None:
+                return self._svd_pipe
+            model_id = (self.config["media"].get("svd_model_id") or "").strip() or "stabilityai/stable-video-diffusion-img2vid-xt"
+            try:
+                pipe = StableVideoDiffusionPipeline.from_pretrained(
+                    model_id,
+                    torch_dtype=self._torch_dtype,
+                    variant="fp16" if self._torch_dtype == torch.float16 else None,
+                )
+                pipe.enable_attention_slicing()
+                if self._device == "cuda":
+                    pipe = pipe.to(self._device)
+                    try:
+                        pipe.enable_xformers_memory_efficient_attention()
+                    except Exception:
+                        pass
+                self._svd_pipe = pipe
+                return pipe
+            except Exception:
+                self._svd_pipe = None
+                return None
+
     async def generate_image(
         self,
         prompt: str,
@@ -42,8 +109,33 @@ class MediaRouter:
         width: int = 512,
         height: int = 768,
     ) -> Dict[str, Any]:
+        # Prefer local diffusers SDXL if available; fall back to SD.Next
+        pipe = await self._ensure_sdxl()
+        if pipe is not None:
+            try:
+                generator = None
+                seed = self.config["media"].get("image_seed")
+                if isinstance(seed, int):
+                    generator = torch.Generator(device=self._device).manual_seed(seed)
+                result = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative,
+                    num_inference_steps=steps,
+                    width=width,
+                    height=height,
+                    guidance_scale=7.0,
+                    generator=generator,
+                )
+                img = result.images[0]
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                return {"ok": True, "images_base64": [b64]}
+            except Exception as exc:
+                return {"ok": False, "error": f"Local SDXL failed: {exc}"}
+
         if not self.config["media"].get("sdnext_enabled"):
-            return {"ok": False, "error": "SD.Next disabled. Enable in config."}
+            return {"ok": False, "error": "Image generation unavailable (no SDXL model and SD.Next disabled)." }
         url = f"{self.config['media']['sdnext_host']}/sdapi/v1/txt2img"
         payload = {
             "prompt": prompt,
@@ -65,11 +157,69 @@ class MediaRouter:
             except Exception as exc:
                 return {"ok": False, "error": f"Image service unavailable: {exc}"}
 
-    async def generate_video(self, prompt: str) -> Dict[str, Any]:
+    async def generate_video(
+        self,
+        prompt: str,
+        duration: int = 60,
+        width: int = 960,
+        height: int = 540,
+    ) -> Dict[str, Any]:
         if not self.config["media"].get("video_enabled"):
             return {"ok": False, "error": "Video worker disabled in config."}
-        # Placeholder hook for future Wan2.2 integration
-        return {"ok": False, "error": "Video generation stub. Enable worker implementation."}
+        frame = await self.generate_image(prompt, "", 18, width, height)
+        if not frame.get("ok"):
+            return {"ok": False, "error": frame.get("error", "Frame generation failed.")}
+        images = frame.get("images_base64") or []
+        if not images:
+            return {"ok": False, "error": "No frame returned for video."}
+
+        raw = images[0]
+        b64_content = raw.split(",", 1)[-1]
+        try:
+            data = base64.b64decode(b64_content)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"Invalid frame data: {exc}"}
+
+        root = Path(__file__).resolve().parents[1]
+        videos_dir = root / "outputs" / "videos"
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        still_path = videos_dir / f"frame_{uuid.uuid4().hex}.png"
+        video_path = videos_dir / f"clip_{uuid.uuid4().hex}.mp4"
+        still_path.write_bytes(data)
+
+        # Create a simple 60s loop from the still frame; keep bitrate small
+        try:
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-loop",
+                "1",
+                "-i",
+                str(still_path),
+                "-t",
+                str(max(5, duration)),
+                "-vf",
+                "scale=1280:-2,format=yuv420p",
+                "-r",
+                "24",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(video_path),
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            if result.returncode != 0 or not video_path.exists():
+                return {"ok": False, "error": "ffmpeg failed to render video."}
+        except FileNotFoundError:
+            return {"ok": False, "error": "ffmpeg not installed; cannot render video."}
+
+        preview = raw if raw.startswith("data:") else f"data:image/png;base64,{raw}"
+        return {
+            "ok": True,
+            "video_path": str(video_path),
+            "cover_base64": preview,
+        }
 
     async def _ensure_fw_model(self):
         """

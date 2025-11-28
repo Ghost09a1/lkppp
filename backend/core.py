@@ -1,3 +1,4 @@
+import base64
 import json
 import asyncio
 from pathlib import Path
@@ -8,6 +9,8 @@ import time
 import subprocess
 import shutil
 import logging
+import re
+import uuid
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -261,7 +264,9 @@ class ImagePayload(BaseModel):
 
 
 class VideoPayload(BaseModel):
-    prompt: str
+    prompt: str = ""
+    use_last_emote: bool = True
+    duration: int = 60
 
 
 def create_app() -> FastAPI:
@@ -270,7 +275,11 @@ def create_app() -> FastAPI:
     db.init_db(db_path)
     conn = db.connect(db_path)
     avatars_dir = ROOT / "outputs" / "avatars"
+    images_dir = ROOT / "outputs" / "images"
+    videos_dir = ROOT / "outputs" / "videos"
     avatars_dir.mkdir(parents=True, exist_ok=True)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    videos_dir.mkdir(parents=True, exist_ok=True)
     media_cfg = config.get("media", {})
     vc_train_script = media_cfg.get("vc_train_script", "vc_train_tool.py")
     rvc_cli_path = media_cfg.get("rvc_cli_path", "")
@@ -291,6 +300,8 @@ def create_app() -> FastAPI:
     ui_dir = ROOT / config["paths"]["ui_dir"]
     app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
     app.mount("/avatars", StaticFiles(directory=str(avatars_dir), html=False), name="avatars")
+    app.mount("/images", StaticFiles(directory=str(images_dir), html=False), name="images")
+    app.mount("/videos", StaticFiles(directory=str(videos_dir), html=False), name="videos")
 
     def _first_wav_in_raw(char_id: int) -> str:
         raw_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
@@ -298,6 +309,31 @@ def create_app() -> FastAPI:
             return ""
         candidates = sorted(raw_dir.glob("*.wav"))
         return str(candidates[0]) if candidates else ""
+
+    def _save_image_file(img_b64: str) -> str:
+        content = img_b64.split(",", 1)[-1]
+        filename = f"img_{uuid.uuid4().hex}.png"
+        out_path = images_dir / filename
+        out_path.write_bytes(base64.b64decode(content))
+        return filename
+
+    def _last_emote(char_id: int) -> str:
+        """
+        Return the most recent *emote* snippet from stored messages for a character.
+        """
+        cur = conn.cursor()
+        rows = cur.execute(
+            "SELECT content FROM messages WHERE character_id = ? ORDER BY id DESC LIMIT 40",
+            (char_id,),
+        ).fetchall()
+        for row in rows:
+            text = (row["content"] or "").strip()
+            matches = list(re.finditer(r"\*(.+?)\*", text))
+            for match in reversed(matches):
+                candidate = match.group(1).strip()
+                if candidate:
+                    return candidate
+        return ""
 
     def _save_avatar_file(char_id: int, upload: UploadFile, prev_path: str | None = None) -> str:
         # remove old avatar if present
@@ -647,11 +683,78 @@ def create_app() -> FastAPI:
 
     @app.post("/generate_image")
     async def generate_image(payload: ImagePayload):
-        return await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height)
+        result = await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height)
+        images = result.get("images_base64") or []
+        url = ""
+        if images:
+            prefixed = images[0] if images[0].startswith("data:") else f"data:image/png;base64,{images[0]}"
+            filename = _save_image_file(prefixed)
+            url = f"/images/{filename}"
+            result["image_url"] = url
+            result["image_base64"] = prefixed
+        return result
+
+    @app.post("/posts/{char_id}/image")
+    async def attach_image_to_post(char_id: int, payload: ImagePayload):
+        if not (payload.prompt or "").strip():
+            raise HTTPException(status_code=400, detail="Prompt required for image generation.")
+        result = await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height)
+        if not result.get("ok"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Image generation failed."))
+        images = result.get("images_base64") or []
+        if not images:
+            raise HTTPException(status_code=500, detail="No image returned.")
+        prefixed = images[0] if images[0].startswith("data:") else f"data:image/png;base64,{images[0]}"
+        filename = _save_image_file(prefixed)
+        return {
+            "ok": True,
+            "image_base64": prefixed,
+            "image_url": f"/images/{filename}",
+            "prompt": payload.prompt,
+        }
+    @app.post("/api/posts/{char_id}/image")
+    async def attach_image_to_post_api(char_id: int, payload: ImagePayload):
+        return await attach_image_to_post(char_id, payload)
 
     @app.post("/generate_video")
     async def generate_video(payload: VideoPayload):
-        return await media.generate_video(payload.prompt)
+        prompt = (payload.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt required for video generation.")
+        duration = max(5, min(120, payload.duration or 60))
+        return await media.generate_video(prompt, duration=duration)
+
+    @app.post("/posts/{char_id}/video")
+    async def attach_video_to_post(char_id: int, payload: VideoPayload):
+        prompt = (payload.prompt or "").strip()
+        emote_used = ""
+        if not prompt and payload.use_last_emote:
+            emote_used = _last_emote(char_id)
+            if emote_used:
+                prompt = f"{emote_used}, cinematic atmosphere"
+        if not prompt:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide a prompt or ensure a recent emote exists to derive one.",
+            )
+        duration = max(5, min(120, payload.duration or 60))
+        result = await media.generate_video(prompt, duration=duration)
+        if not result.get("ok"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Video generation failed."))
+        video_path = Path(result.get("video_path", ""))
+        video_url = f"/videos/{video_path.name}" if video_path.name else ""
+        return {
+            "ok": True,
+            "video_url": video_url,
+            "video_path": str(video_path) if video_path else "",
+            "cover_base64": result.get("cover_base64", ""),
+            "prompt_used": prompt,
+            "emote_used": emote_used,
+            "duration": duration,
+        }
+    @app.post("/api/posts/{char_id}/video")
+    async def attach_video_to_post_api(char_id: int, payload: VideoPayload):
+        return await attach_video_to_post(char_id, payload)
 
     @app.post("/tts")
     async def tts(payload: TtsPayload):
