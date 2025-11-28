@@ -227,7 +227,7 @@ class MediaRouter:
                 return sdreq
             return await _do_sdnext_call(sdreq)
 
-        if mode in ("local", "auto"):
+        if mode == "local":
             local_resp = await _local_sdxl()
             if local_resp.get("ok") or mode == "local":
                 return local_resp
@@ -235,7 +235,7 @@ class MediaRouter:
 
         sdreq = _call_sdnext()
         if sdreq.get("error"):
-            return {"ok": False, "error": "Image generation unavailable (no local SDXL or SD.Next disabled)." }
+            return {"ok": False, "error": "Image generation unavailable (no local SDXL or SD.Next disabled)."}
         return await _do_sdnext_call(sdreq)
 
     async def generate_video(
@@ -253,7 +253,7 @@ class MediaRouter:
         # Step 1: generate start frame with SDXL
         img_resp = await self.generate_image(prompt, "", max(18, min(40, duration // 2)), width, height)
         if not img_resp.get("ok"):
-            return {"ok": False, "error": img_resp.get("error", "Frame generation failed.") }
+            return {"ok": False, "error": img_resp.get("error", "Frame generation failed.")}
         images = img_resp.get("images_base64") or []
         if not images:
             return {"ok": False, "error": "No frame returned for video."}
