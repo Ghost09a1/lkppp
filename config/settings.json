@@ -42,7 +42,7 @@
         "vc_script": "rvc_infer.py",
         "vc_train_script": "vc_train_tool.py",
         "rvc_cli_path": "rvc_webui/infer-web.py",
-        "rvc_webui_dir": "C:/Users/Ghost/Desktop/avo/MyCandyLocal/rvc_webui",
+        "rvc_webui_dir": "C:/Users/Ghost/Desktop/MyCandyLocal/rvc_webui",
         "tts_port": 8020,
 
         "sdnext_enabled": false,
@@ -53,7 +53,7 @@
         "image_mode": "comfy",
 
         "comfy_enabled": true,
-        "comfy_host": "http://127.0.0.1:8002",
+        "comfy_host": "http://127.0.0.1:8188",
         "comfy_workflow_path": "comfy_workflows/txt2img_api.json",
 
         "svd_model_id": "stabilityai/stable-video-diffusion-img2vid-xt",
