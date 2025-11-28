@@ -1037,3 +1037,127 @@ def cast_to_device(tensor, device, dtype, copy=False):
     """
     return cast_to(tensor, dtype=dtype, device=device,
                    non_blocking=False, copy=copy)
+
+
+# ---------------------------------------------------------------------------
+# MyCandy / ComfyUI Kompatibilitäts-Shim
+#
+# Diesen Block ans ENDE von comfy/model_management.py setzen.
+# Er ergänzt nur fehlende Funktionen für neuere ComfyUI-Versionen,
+# ohne bestehende Definitionen zu überschreiben.
+# ---------------------------------------------------------------------------
+
+import torch as _torch  # Alias, um Konflikte mit dem oberen "import torch" zu vermeiden
+
+# -------- non-blocking / Device-Helper --------------------------------------
+
+if "device_supports_non_blocking" not in globals():
+    def device_supports_non_blocking(device):
+        """
+        Auf CPU/DirectML/Arc machen non-blocking Copies keinen echten Sinn.
+        -> Standardmäßig nur auf CUDA-Geräten aktivieren.
+        """
+        try:
+            if _torch.cuda.is_available():
+                dev_type = getattr(device, "type", str(device))
+                return dev_type == "cuda"
+        except Exception:
+            pass
+        return False
+
+
+if "device_should_use_non_blocking" not in globals():
+    def device_should_use_non_blocking(device):
+        return device_supports_non_blocking(device)
+
+
+# -------- VAE-Attention-Flags -----------------------------------------------
+
+if "xformers_enabled_vae" not in globals():
+    def xformers_enabled_vae():
+        """
+        In diesem Setup gehen wir davon aus, dass kein xformers im VAE benutzt wird.
+        """
+        return False
+
+
+if "pytorch_attention_enabled_vae" not in globals():
+    def pytorch_attention_enabled_vae():
+        """
+        Für CPU-/DirectML-/Arc-Builds nutzen wir immer PyTorch-Attention im VAE.
+        """
+        return True
+
+
+# -------- Dtype-Support-Helper ----------------------------------------------
+
+if "supports_dtype" not in globals():
+    def supports_dtype(device, dtype):
+        """
+        Konservative Dtype-Unterstützung:
+
+        * float32 geht überall
+        * auf CPU vermeiden wir standardmäßig float16/bfloat16
+        * auf GPU/anderen Geräten erlauben wir float16/bfloat16
+        """
+        if dtype == _torch.float32:
+            return True
+
+        dev_type = getattr(device, "type", str(device))
+        if dev_type == "cpu":
+            return False
+
+        allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
+        allowed.discard(None)
+        return dtype in allowed
+
+
+if "supports_cast" not in globals():
+    def supports_cast(device, dtype):
+        """
+        Wird z.B. von comfy.ops / CLIP benutzt.
+        """
+        return supports_dtype(device, dtype)
+
+
+# -------- Layout / channels_last --------------------------------------------
+
+if "force_channels_last" not in globals():
+    def force_channels_last():
+        """
+        channels_last bringt auf GPU manchmal Speed,
+        auf CPU lassen wir das vorsichtshalber aus.
+        """
+        return False
+
+
+# -------- Casting-Helper, die comfy.ops erwartet ----------------------------
+
+if "cast_to" not in globals():
+    def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False):
+        """
+        Vereinfachte Variante von ComfyUIs cast_to:
+
+        * ignoriert non_blocking auf CPU/DirectML sicher
+        * castet auf gewünschtes Device + Dtype
+        """
+        target_device = device or weight.device
+        target_dtype = dtype or weight.dtype
+
+        # Nichts zu tun, alles schon richtig
+        if (not copy
+            and target_device == weight.device
+            and target_dtype == weight.dtype):
+            return weight
+
+        # non_blocking wird hier absichtlich ignoriert
+        return weight.to(device=target_device, dtype=target_dtype, copy=copy)
+
+
+if "cast_to_device" not in globals():
+    def cast_to_device(tensor, device, dtype, copy=False):
+        """
+        Helper, den comfy.ops aufruft.
+        """
+        return cast_to(tensor, dtype=dtype, device=device,
+                       non_blocking=False, copy=copy)
