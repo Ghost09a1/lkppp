@@ -975,82 +975,65 @@ def supports_dtype(device, dtype): #TODO
 # MyCandy / ARC compatibility shim for neueres ComfyUI
 # ---------------------------------------------------------------------------
 
-import torch as _torch
+# ---------------------------------------------------------------------------
+# MyCandy / Arc compatibility shim for CPU-only / DirectML / Arc builds
+# ---------------------------------------------------------------------------
 
-def supports_dtype(device, dtype):
-	"""Konservative Variante von supports_dtype.
+import torch as _torch  # Alias, damit wir nicht mit dem oberen Import kollidieren
 
-	* float32 geht überall
-	* auf CPU lassen wir half/bf16 vorsichtshalber nicht zu
-	* auf GPU / DirectML erlauben wir float16 und bfloat16
-	"""
-	if dtype == _torch.float32:
-		return True
-
-	dev_type = getattr(device, "type", str(device))
-	if dev_type == "cpu":
-		return False
-
-	allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
-	allowed.discard(None)
-	return dtype in allowed
-
-def supports_cast(device, dtype):
-	"""Nutzt dieselbe Logik wie supports_dtype."""
-	return supports_dtype(device, dtype)
-
-def xformers_enabled_vae():
-	"""In deinem Setup ist xformers nicht installiert -> immer False."""
-	return False
-
-def pytorch_attention_enabled_vae():
-	"""Wir nutzen standardmäßig die PyTorch-Attention im VAE."""
-	return True
-
-def force_channels_last():
-	"""Channels-last Layout ist hauptsächlich für GPU-Optimierung.
-
-	Auf CPU eher überflüssig – daher hier konservativ False.
-	"""
-	return False
-
-# Anzahl der Streams, die das Offload-System benutzen darf.
-NUM_STREAMS = 1
-
-# --- compatibility helpers, falls in dieser älteren Version noch fehlen ---
-
-if 'is_device_type' not in globals():
-	def is_device_type(device, dev_type: str) -> bool:
-		# device kann torch.device oder String wie "cpu" sein
-		if hasattr(device, "type"):
-			return device.type == dev_type
-		return str(device) == dev_type
-
-if 'is_device_cpu' not in globals():
-	def is_device_cpu(device) -> bool:
-		return is_device_type(device, "cpu")
-
-if 'is_device_mps' not in globals():
-	def is_device_mps(device) -> bool:
-		return is_device_type(device, "mps")
-
-if 'is_device_cuda' not in globals():
-	def is_device_cuda(device) -> bool:
-		return is_device_type(device, "cuda")
-
-# --- NEU: Stubs für non_blocking-Unterstützung -----------------------------
 
 def device_supports_non_blocking(device):
-	"""
-	Kompatibilitäts-Stub für comfy.ops.cast_bias_weight().
-	Auf CPU/XPU ist non_blocking nicht wichtig -> immer False.
-	"""
-	return False
+    """
+    Vorsichtige Default-Einstellung:
+    - Auf reinen CPU-Builds / DirectML / XPU => False
+    - Non-blocking Copies lohnen sich dort eh nicht.
+    """
+    try:
+        if _torch.cuda.is_available():
+            dev_type = getattr(device, "type", str(device))
+            return dev_type == "cuda"
+    except Exception:
+        pass
+    return False
+
 
 def device_should_use_non_blocking(device):
-	"""
-	Manche neueren Nodes rufen diese Helper-Funktion auf.
-	Wir leiten einfach auf device_supports_non_blocking weiter.
-	"""
-	return device_supports_non_blocking(device)
-a
+    """
+    Neuere ComfyUI-Versionen fragen diese Funktion ab.
+    Wir leiten einfach auf device_supports_non_blocking weiter.
+    """
+    return device_supports_non_blocking(device)
+
+
+def force_channels_last():
+    """
+    Channels-last Layout bringt auf CPU selten Vorteile,
+    darum bleiben wir konservativ bei False.
+    """
+    return False
+
+
+def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False):
+    """
+    Vereinfachte Variante von ComfyUIs cast_to, ohne GPU-Spezialpfade.
+    Reicht völlig für CPU / DirectML / Arc.
+    """
+    target_device = device or weight.device
+    target_dtype = dtype or weight.dtype
+
+    # Nichts zu tun, alles schon am Ziel
+    if (not copy
+        and target_device == weight.device
+        and target_dtype == weight.dtype):
+        return weight
+
+    return weight.to(device=target_device, dtype=target_dtype, copy=copy)
+
+
+def cast_to_device(tensor, device, dtype, copy=False):
+    """
+    Helper, den comfy.ops aufruft.
+    Wir erzwingen non_blocking=False, damit es auf allen Backends sicher ist.
+    """
+    return cast_to(tensor, dtype=dtype, device=device,
+                   non_blocking=False, copy=copy)
