@@ -1,6 +1,7 @@
 from __future__ import annotations
 import torch
 
+
 import os
 import sys
 import json
@@ -42,91 +43,134 @@ import folder_paths
 import latent_preview
 import node_helpers
 
-# --- Compatibility-Shim für unterschiedliche comfy.model_management APIs ---
+# --- Compatibility-Shim für comfy.model_management ---
 _mm = comfy.model_management
 
-# In manchen Versionen fehlt diese Funktion komplett – dann einfach no-op.
-if not hasattr(_mm, "throw_exception_if_processing_interrupted"):
-    def _noop_throw_exception_if_processing_interrupted() -> None:
-        return
-    _mm.throw_exception_if_processing_interrupted = _noop_throw_exception_if_processing_interrupted
+# Interrupt / Cancel handling -------------------------------------------------
+if not hasattr(_mm, "InterruptProcessingException"):
+    class InterruptProcessingException(Exception):
+        pass
+    _mm.InterruptProcessingException = InterruptProcessingException
 
-# Ältere Versionen nutzen interrupt_current_processing, neuere evtl. nicht.
 if not hasattr(_mm, "interrupt_current_processing"):
-    def _noop_interrupt_current_processing(value: bool = True) -> None:
+    def _interrupt_current_processing(value: bool = True):
+        # Ältere Versionen kennen das nicht – wir tun einfach nichts.
         return
-    _mm.interrupt_current_processing = _noop_interrupt_current_processing
+    _mm.interrupt_current_processing = _interrupt_current_processing
 
-# Manche Versionen haben keine Funktion soft_empty_cache – dann definieren wir eine harmlose.
+if not hasattr(_mm, "throw_exception_if_processing_interrupted"):
+    def _throw_exception_if_processing_interrupted():
+        # In alten Versionen gibt es keine echte Unterbrechung.
+        return
+    _mm.throw_exception_if_processing_interrupted = _throw_exception_if_processing_interrupted
+
+# Speicher / VRAM helpers -----------------------------------------------------
 if not hasattr(_mm, "soft_empty_cache"):
-    def _noop_soft_empty_cache() -> None:
-        # Auf CPU passiert hier eh nichts; auf CUDA würden wir einfach den Cache leeren.
+    def _soft_empty_cache():
+        """
+        Sanfte Variante von empty_cache.
+        Auf CPU macht das nichts, auf CUDA leeren wir optional den Cache.
+        """
         try:
-            import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
             pass
-    _mm.soft_empty_cache = _noop_soft_empty_cache
+    _mm.soft_empty_cache = _soft_empty_cache
 
-# Einige Versionen haben keine should_use_fp16 – wir entscheiden hier konservativ:
-# auf CPU: niemals fp16, auf CUDA: fp16 ok.
+if not hasattr(_mm, "get_free_memory"):
+    def _get_free_memory(device=None, torch_free_too: bool = False):
+        """
+        Sehr grobe Abschätzung des freien Speichers.
+        Für CPU-Only-Setup reicht ein Fake-Wert.
+        """
+        fake = 16 * 1024 * 1024 * 1024  # 16 GB
+        if torch_free_too:
+            return fake, fake
+        return fake
+    _mm.get_free_memory = _get_free_memory
+
+# Dtype-Entscheidungen (fp16/bf16/fp8) ----------------------------------------
 if not hasattr(_mm, "should_use_fp16"):
-    def _should_use_fp16(device=None, model_params=None, **kwargs) -> bool:
+    def _should_use_fp16(device=None, model_params=None, prioritize_performance=True, manual_cast: bool = False, **kwargs) -> bool:
+        """
+        Konservativ:
+        - Auf CPU kein fp16
+        - Auf CUDA fp16 ok
+        """
         try:
-            import torch
-            if device is None:
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            if device == "cuda":
-                return True
+            dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
         except Exception:
-            pass
-        return False
+            dev = device or "cpu"
+
+        if isinstance(dev, str) and "cpu" in dev:
+            return False
+        return torch.cuda.is_available()
     _mm.should_use_fp16 = _should_use_fp16
 
-# Und jetzt auch should_use_bf16 – auf deinem Setup (torch+cpu) IMMER False.
 if not hasattr(_mm, "should_use_bf16"):
-    def _should_use_bf16(device=None, model_params=None, **kwargs) -> bool:
-        # bfloat16 bringt dir auf CPU nichts; also konservativ False.
+    def _should_use_bf16(device=None, model_params=None, prioritize_performance=True, manual_cast: bool = False, **kwargs) -> bool:
+        # bf16 auf deinem Setup vorsichtshalber aus
         return False
     _mm.should_use_bf16 = _should_use_bf16
 
+if not hasattr(_mm, "supports_fp8_compute"):
+    def _supports_fp8_compute(device=None, **kwargs) -> bool:
+        # fp8 nie aktivieren
+        return False
+    _mm.supports_fp8_compute = _supports_fp8_compute
 
-# Einige Versionen haben keine eigene InterruptProcessingException-Klasse.
-if not hasattr(_mm, "InterruptProcessingException"):
-    class InterruptProcessingException(Exception):
-        """Dummy-Ersatz, damit 'except comfy.model_management.InterruptProcessingException'
-        nicht abstürzt, wenn die Klasse in dieser comfy-Version fehlt.
+# Layout / Channel-Format -----------------------------------------------------
+if not hasattr(_mm, "force_channels_last"):
+    def _force_channels_last() -> bool:
+        # Für CPU-Only egal -> False
+        return False
+    _mm.force_channels_last = _force_channels_last
+
+# xformers-Optimierungen für VAE ----------------------------------------------
+if not hasattr(_mm, "xformers_enabled_vae"):
+    def _xformers_enabled_vae() -> bool:
+        # Auf deinem Setup deaktiviert
+        return False
+    _mm.xformers_enabled_vae = _xformers_enabled_vae
+
+# PyTorch-Attention für VAE ---------------------------------------------------
+if not hasattr(_mm, "pytorch_attention_enabled_vae"):
+    def _pytorch_attention_enabled_vae() -> bool:
         """
-        pass
-    _mm.InterruptProcessingException = InterruptProcessingException
-# --- Ende Compatibility shim ---
+        In aktuellen Comfy-Versionen wird hier ein Flag geprüft.
+        Wenn die Funktion fehlt, sind wir meist auf CPU/Standard-Setup.
+        Dann ist PyTorch-Attention okay.
+        """
+        # Wenn es eine globale pytorch_attention_enabled()-Funktion gibt, nutz die:
+        if hasattr(_mm, "pytorch_attention_enabled"):
+            try:
+                return bool(_mm.pytorch_attention_enabled())
+            except Exception:
+                pass
+        # Fallback: einfach True -> normale PyTorch-Attention verwenden.
+        return True
 
+    _mm.pytorch_attention_enabled_vae = _pytorch_attention_enabled_vae
+
+
+# --- Ende Compatibility-Shim -------------------------------------------------
 
 
 def before_node_execution():
-    # nutzt jetzt ggf. unsere no-op Version, crasht aber nicht mehr
-    comfy.model_management.throw_exception_if_processing_interrupted()
+    _mm.throw_exception_if_processing_interrupted()
 
 
 def interrupt_processing(value: bool = True):
-    """
-    Compatibility wrapper: ältere ComfyUI-Versionen nutzten
-    comfy.model_management.interrupt_current_processing, neuere evtl. etwas anderes.
-    Wenn es nichts Passendes gibt, machen wir einfach nichts.
-    """
-    mm = comfy.model_management
-    if hasattr(mm, "interrupt_current_processing"):
-        mm.interrupt_current_processing(value)
-    elif hasattr(mm, "interrupt_processing"):
-        mm.interrupt_processing(value)
+    if hasattr(_mm, "interrupt_current_processing"):
+        _mm.interrupt_current_processing(value)
+    elif hasattr(_mm, "interrupt_processing"):
+        _mm.interrupt_processing(value)
     else:
-        # keine passende Funktion vorhanden -> no-op
         return
 
 
-MAX_RESOLUTION = 16384
-
+MAX_RESOLUTION=16384
 
 class CLIPTextEncode(ComfyNodeABC):
     @classmethod
