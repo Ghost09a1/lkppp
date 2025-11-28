@@ -108,18 +108,6 @@ if not hasattr(_mm, "should_use_fp16"):
         return torch.cuda.is_available()
     _mm.should_use_fp16 = _should_use_fp16
 
-# Unterstützt das Device einen Cast auf diesen dtype? -------------------------
-if not hasattr(_mm, "supports_cast"):
-    def _supports_cast(device, dtype, *args, **kwargs) -> bool:
-        """
-        In neueren Comfy-Versionen wird geprüft, ob ein sicherer Cast möglich ist.
-        Für dein Setup (CPU, float32) ist Cast immer ok, also True zurückgeben.
-        """
-        return True
-
-    _mm.supports_cast = _supports_cast
-
-
 if not hasattr(_mm, "should_use_bf16"):
     def _should_use_bf16(device=None, model_params=None, prioritize_performance=True, manual_cast: bool = False, **kwargs) -> bool:
         # bf16 auf deinem Setup vorsichtshalber aus
@@ -145,62 +133,6 @@ if not hasattr(_mm, "xformers_enabled_vae"):
         # Auf deinem Setup deaktiviert
         return False
     _mm.xformers_enabled_vae = _xformers_enabled_vae
-
-# Device-Helfer (CPU / MPS) ---------------------------------------------------
-if not hasattr(_mm, "is_device_cpu"):
-    def _is_device_cpu(device) -> bool:
-        """
-        Bestimmt, ob ein Device eine CPU ist.
-        Wird z.B. in text_encoder_dtype(...) verwendet.
-        """
-        try:
-            import torch
-            dev = torch.device(device) if not isinstance(device, torch.device) else device
-            return dev.type == "cpu"
-        except Exception:
-            # Fallback bei Strings wie "cpu" / "cpu:0"
-            if isinstance(device, str) and "cpu" in device.lower():
-                return True
-            return False
-    _mm.is_device_cpu = _is_device_cpu
-
-if not hasattr(_mm, "is_device_mps"):
-    def _is_device_mps(device) -> bool:
-        """
-        Entspricht der MPS-Variante für Apple-GPUs.
-        Auf deinem Setup (Windows + CPU/ARC) wird das praktisch nie benutzt,
-        aber wir definieren es sauber.
-        """
-        try:
-            import torch
-            dev = torch.device(device) if not isinstance(device, torch.device) else device
-            return dev.type == "mps"
-        except Exception:
-            if isinstance(device, str) and "mps" in device.lower():
-                return True
-            return False
-    _mm.is_device_mps = _is_device_mps
-
-
-# PyTorch-Attention für VAE ---------------------------------------------------
-if not hasattr(_mm, "pytorch_attention_enabled_vae"):
-    def _pytorch_attention_enabled_vae() -> bool:
-        """
-        In aktuellen Comfy-Versionen wird hier ein Flag geprüft.
-        Wenn die Funktion fehlt, sind wir meist auf CPU/Standard-Setup.
-        Dann ist PyTorch-Attention okay.
-        """
-        # Wenn es eine globale pytorch_attention_enabled()-Funktion gibt, nutz die:
-        if hasattr(_mm, "pytorch_attention_enabled"):
-            try:
-                return bool(_mm.pytorch_attention_enabled())
-            except Exception:
-                pass
-        # Fallback: einfach True -> normale PyTorch-Attention verwenden.
-        return True
-
-    _mm.pytorch_attention_enabled_vae = _pytorch_attention_enabled_vae
-
 
 # --- Ende Compatibility-Shim -------------------------------------------------
 
@@ -2290,6 +2222,9 @@ async def load_custom_node(module_path: str, ignore=set(), module_parent="custom
         sys_module_name = module_name
     elif os.path.isdir(module_path):
         sys_module_name = module_path.replace(".", "_x_")
+    else:
+        # Fallback: falls der Pfad aus irgendeinem Grund weder Datei noch Verzeichnis ist
+        sys_module_name = module_name
 
     try:
         logging.debug("Trying to load custom node {}".format(module_path))

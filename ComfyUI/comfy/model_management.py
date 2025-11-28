@@ -970,3 +970,55 @@ def supports_dtype(device, dtype): #TODO
 		return True
 	if is_device_cpu(device):
 		return False
+
+# ---------------------------------------------------------------------------
+# MyCandy / ARC compatibility shim for newer ComfyUI versions
+# Ergänzt Hilfsfunktionen, die von neueren Modulen erwartet werden.
+# ---------------------------------------------------------------------------
+
+import torch as _torch
+
+def supports_dtype(device, dtype):
+    """Konservative Variante von supports_dtype.
+
+    * float32 geht überall
+    * auf CPU lassen wir half/bf16 vorsichtshalber nicht zu
+    * auf GPU / DirectML erlauben wir float16 und bfloat16
+    """
+    if dtype == _torch.float32:
+        return True
+
+    dev_type = getattr(device, "type", str(device))
+    if dev_type == "cpu":
+        return False
+
+    allowed = {_torch.float16, getattr(_torch, "bfloat16", None)}
+    allowed.discard(None)
+    return dtype in allowed
+
+def supports_cast(device, dtype):
+    """Nutzt dieselbe Logik wie supports_dtype.
+
+    Wird u.a. von CLIP/TE genutzt, um zu entscheiden, ob der Cast
+    auf dem jeweiligen Device überhaupt erlaubt ist.
+    """
+    return supports_dtype(device, dtype)
+
+def xformers_enabled_vae():
+    """In deinem Setup ist xformers nicht installiert -> immer False."""
+    return False
+
+def pytorch_attention_enabled_vae():
+    """Wir nutzen standardmäßig die PyTorch-Attention im VAE."""
+    return True
+
+def force_channels_last():
+    """Channels-last Layout ist hauptsächlich für GPU-Optimierung.
+
+    Auf CPU eher überflüssig – daher hier konservativ False.
+    """
+    return False
+
+# Anzahl der Streams, die das Offload-System benutzen darf.
+# Für CPU / DirectML ist 1 sehr konservativ und sicher.
+NUM_STREAMS = 1
