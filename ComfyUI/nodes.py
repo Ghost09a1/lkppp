@@ -47,7 +47,22 @@ def before_node_execution():
     comfy.model_management.throw_exception_if_processing_interrupted()
 
 def interrupt_processing(value=True):
-    comfy.model_management.interrupt_current_processing(value)
+    """
+    Compatibility wrapper: older ComfyUI used
+    comfy.model_management.interrupt_current_processing,
+    neuere Versionen haben diese Funktion evtl. nicht mehr.
+    Dann machen wir einfach nichts.
+    """
+    mm = comfy.model_management
+    if hasattr(mm, "interrupt_current_processing"):
+        mm.interrupt_current_processing(value)
+    elif hasattr(mm, "interrupt_processing"):
+        # fallback, falls es eine neue API gibt
+        mm.interrupt_processing(value)
+    else:
+        # keine passende Funktion vorhanden -> no-op
+        return
+
 
 MAX_RESOLUTION=16384
 
