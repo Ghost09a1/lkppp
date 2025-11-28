@@ -72,6 +72,12 @@ class MediaRouter:
             if self._sd_pipe is not None:
                 return self._sd_pipe
             model_path = (self.config["media"].get("sdxl_model_path") or "").strip()
+            if model_path:
+                mp = Path(model_path)
+                if not mp.is_absolute():
+                    # This script is in /backend, so root is parent.parent
+                    root = Path(__file__).resolve().parent.parent
+                    model_path = str(root / mp)
             if not model_path or not Path(model_path).exists():
                 return None
             try:
