@@ -1022,3 +1022,24 @@ def force_channels_last():
 # Anzahl der Streams, die das Offload-System benutzen darf.
 # Für CPU / DirectML ist 1 sehr konservativ und sicher.
 NUM_STREAMS = 1
+
+# --- compatibility helpers, falls in dieser älteren Version noch fehlen ---
+
+if 'is_device_type' not in globals():
+    def is_device_type(device, dev_type: str) -> bool:
+        # device kann torch.device oder String wie "cpu" sein
+        if hasattr(device, "type"):
+            return device.type == dev_type
+        return str(device) == dev_type
+
+if 'is_device_cpu' not in globals():
+    def is_device_cpu(device) -> bool:
+        return is_device_type(device, "cpu")
+
+if 'is_device_mps' not in globals():
+    def is_device_mps(device) -> bool:
+        return is_device_type(device, "mps")
+
+if 'is_device_cuda' not in globals():
+    def is_device_cuda(device) -> bool:
+        return is_device_type(device, "cuda")
