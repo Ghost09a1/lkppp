@@ -17,6 +17,44 @@ if (Test-Path $venvPython) {
     Write-Host "Using system Python"
 }
 
+# --------------------------------------------------------------------
+# LLM server (llama.cpp) nach settings.json
+# --------------------------------------------------------------------
+$llamaExe  = Join-Path $root "bins\llama-server.exe"
+$modelPath = Join-Path $root "models\llm\MN-12B-Celeste-V1.9-Q4_K_M.gguf"
+
+if (Test-Path $llamaExe) {
+    if (-not (Test-Path $modelPath)) {
+        Write-Warning "LLM model not found at '$modelPath' - LLM server may fail to start."
+    }
+
+    # Werte aus settings.json:
+    # host: 127.0.0.1
+    # port: 8081
+    # n_ctx: 8192
+    # n_threads: 12
+    # gpu_layers: 0
+    # batch: 128
+
+    $llamaArgs = @(
+        "--model", $modelPath,
+        "--host", "127.0.0.1",
+        "--port", "8081",
+        "--ctx-size", "8192",
+        "--threads", "12",
+        "--n-gpu-layers", "0",
+        "--batch-size", "128"
+    )
+
+    Write-Host "Starting LLM server (llama-server.exe) on port 8081..."
+    Start-Process -FilePath $llamaExe -WorkingDirectory $root -ArgumentList $llamaArgs
+} else {
+    Write-Host "LLM server binary not found at '$llamaExe', skipping LLM server."
+}
+
+# --------------------------------------------------------------------
+# Helper zum Start von Python-Apps in eigenen Fenstern (-NoExit)
+# --------------------------------------------------------------------
 function Start-App {
     param(
         [string]$Name,
@@ -29,43 +67,13 @@ function Start-App {
         return
     }
 
-    # Befehl, der in der neuen PowerShell ausgeführt wird
     $psCommand = "Set-Location '$WorkingDirectory'; & '$python' $Arguments"
 
     Write-Host "Starting $Name in separate PowerShell window..."
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", $psCommand
 }
 
-# --- LLM server (llama.cpp) -------------------------------------------------
-
-$llamaExe = Join-Path $root "bins\llama-server.exe"
-if (Test-Path $llamaExe) {
-    $llamaDir   = Split-Path $llamaExe -Parent
-    $modelPath  = Join-Path $root "models\llm\model.gguf"
-
-    if (-not (Test-Path $modelPath)) {
-        Write-Warning "LLM model not found at '$modelPath' - LLM server will probably exit immediately."
-    }
-
-    # Hier Host/Port ggf. an deine config/settings.json anpassen!
-    $llamaArgs = @(
-        "--host", "127.0.0.1",
-        "--port", "8080"
-    )
-    if (Test-Path $modelPath) {
-        $llamaArgs = @("-m", $modelPath) + $llamaArgs
-    }
-
-    Write-Host "Starting LLM server (llama-server.exe)..." -ForegroundColor Green
-    Start-Process -FilePath $llamaExe `
-                  -WorkingDirectory $llamaDir `
-                  -ArgumentList $llamaArgs
-} else {
-    Write-Host "LLM server binary bins\llama-server.exe not found, skipping." -ForegroundColor DarkYellow
-}
-
-
-# 1) MyCandyLocal launcher (starts backend, TTS, etc.)
+# 1) MyCandyLocal launcher (Backend + TTS + UI etc.)
 Start-App -Name "MyCandyLocal Launcher" -WorkingDirectory $root -Arguments "'app_launcher.py'"
 
 # 2) ComfyUI (optional)
@@ -85,4 +93,4 @@ if (Test-Path (Join-Path $rvcDir "infer-web.py")) {
 }
 
 Write-Host ""
-Write-Host "Done. Launched all available servers (each in its own PowerShell window)."
+Write-Host "Done. Launched LLM server and all available Python servers."
