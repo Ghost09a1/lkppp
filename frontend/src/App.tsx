@@ -38,6 +38,9 @@ interface Message {
   audioUrl?: string;
   duration?: number;
   imageBase64?: string;
+  videoUrl?: string;
+  videoPreview?: string;
+  sourcePrompt?: string;
 }
 
 interface Character {
@@ -140,6 +143,13 @@ function App() {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageNegative, setImageNegative] = useState("");
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [imageTargetId, setImageTargetId] = useState<number | null>(null);
+
+  const [showVideoModal, setShowVideoModal] = useState(false);
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoUseLastEmote, setVideoUseLastEmote] = useState(true);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [videoTargetId, setVideoTargetId] = useState<number | null>(null);
 
   const [trainStatus, setTrainStatus] = useState<TrainingStatus>("");
   const [trainProgress, setTrainProgress] = useState(0);
@@ -163,6 +173,7 @@ function App() {
     () => characters.find((c) => c.id === selectedCharId) || null,
     [characters, selectedCharId]
   );
+  const apiBase = useMemo(() => API_URL.replace(/\/$/, ""), []);
 
   // Reset conversation when switching characters so each has a fresh chat
   useEffect(() => {
@@ -171,6 +182,20 @@ function App() {
       setInput("");
     }
   }, [selectedCharId]);
+
+  const findLastEmote = useCallback(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const txt = messages[i].text || "";
+      const regex = /\*(.+?)\*/g;
+      let match: RegExpExecArray | null;
+      let last = "";
+      while ((match = regex.exec(txt)) !== null) {
+        if (match[1]) last = match[1].trim();
+      }
+      if (last) return last;
+    }
+    return "";
+  }, [messages]);
 
   const fetchCharacters = useCallback(async () => {
     try {
@@ -335,43 +360,147 @@ function App() {
     }
   };
 
+  const attachImageToMessage = useCallback(
+    async (prompt: string, targetId?: number | null, negative?: string) => {
+      if (!selectedCharId || !prompt.trim()) return;
+      try {
+        const res = await axios.post(`${API_URL}/posts/${selectedCharId}/image`, {
+          prompt: prompt.trim(),
+          negative: negative ?? "",
+          steps: 24,
+          width: 640,
+          height: 832,
+        });
+        const raw = (res.data?.image_base64 as string | undefined) || res.data?.images_base64?.[0];
+        if (!raw) throw new Error("No image returned.");
+        const img = raw.startsWith("data:") ? raw : `data:image/png;base64,${raw}`;
+        const usedPrompt = (res.data?.prompt as string | undefined) || prompt;
+        setMessages((prev) => {
+          if (targetId) {
+            return prev.map((m) =>
+              m.id === targetId ? { ...m, imageBase64: img, sourcePrompt: usedPrompt } : m
+            );
+          }
+          return [
+            ...prev,
+            { id: Date.now(), sender: "ai", text: usedPrompt || "Generated image", imageBase64: img },
+          ];
+        });
+      } catch (err: any) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now(), sender: "ai", text: err?.response?.data?.detail || "Image generation failed." },
+        ]);
+        throw err;
+      }
+    },
+    [selectedCharId]
+  );
+
+  const attachVideoToMessage = useCallback(
+    async (prompt: string, targetId?: number | null, allowEmoteFallback = true) => {
+      if (!selectedCharId) return;
+      try {
+        const res = await axios.post(`${API_URL}/posts/${selectedCharId}/video`, {
+          prompt: prompt.trim(),
+          use_last_emote: allowEmoteFallback,
+          duration: 60,
+        });
+        const videoPath = (res.data?.video_url as string | undefined) || "";
+        const videoUrl = videoPath ? `${apiBase}${videoPath}` : "";
+        const cover = (res.data?.cover_base64 as string | undefined) || "";
+        const usedPrompt = (res.data?.prompt_used as string | undefined) || prompt || findLastEmote();
+        setMessages((prev) => {
+          if (targetId) {
+            return prev.map((m) =>
+              m.id === targetId
+                ? {
+                    ...m,
+                    videoUrl,
+                    videoPreview: cover || m.videoPreview,
+                    sourcePrompt: usedPrompt || m.sourcePrompt,
+                    imageBase64: m.imageBase64 || cover || m.imageBase64,
+                  }
+                : m
+            );
+          }
+          return [
+            ...prev,
+            {
+              id: Date.now(),
+              sender: "ai",
+              text: usedPrompt || "Generated clip",
+              videoUrl,
+              videoPreview: cover,
+              imageBase64: cover,
+              sourcePrompt: usedPrompt,
+            },
+          ];
+        });
+      } catch (err: any) {
+        setMessages((prev) => [
+          ...prev,
+          { id: Date.now(), sender: "ai", text: err?.response?.data?.detail || "Video generation failed." },
+        ]);
+        throw err;
+      }
+    },
+    [apiBase, findLastEmote, selectedCharId]
+  );
+
+  const handleLLMTriggers = useCallback(
+    async (rawReply: string, targetMsgId: number) => {
+      const imageMatchNew = rawReply.match(/\[GENERATE_IMAGE\]\s*([\s\S]+)/i);
+      const videoMatchNew = rawReply.match(/\[GENERATE_VIDEO\]\s*([\s\S]+)/i);
+      const imageMatchOld = rawReply.match(/\[\[\s*image\s*:(.+?)\]\]/i);
+      const videoMatchOld = rawReply.match(/\[\[\s*video(?:\s*:(.+?))?\]\]/i);
+
+      const imagePrompt =
+        (imageMatchNew && imageMatchNew[1]) ||
+        (imageMatchOld && imageMatchOld[1]) ||
+        "";
+      if (imagePrompt.trim()) {
+        await attachImageToMessage(imagePrompt.trim(), targetMsgId).catch(() => {});
+      }
+
+      const videoPrompt =
+        (videoMatchNew && videoMatchNew[1]) ||
+        (videoMatchOld && videoMatchOld[1]) ||
+        "";
+      if (videoMatchNew || videoMatchOld) {
+        await attachVideoToMessage(videoPrompt.trim(), targetMsgId, true).catch(() => {});
+      }
+    },
+    [attachImageToMessage, attachVideoToMessage]
+  );
+
   const generateImage = async () => {
     if (!imagePrompt.trim()) return;
     setIsGeneratingImage(true);
     try {
-      const res = await axios.post(`${API_URL}/generate_image`, {
-        prompt: imagePrompt,
-        negative: imageNegative,
-        steps: 24,
-        width: 640,
-        height: 832,
-      });
-      const img = res.data?.images_base64?.[0] || res.data?.image_base64;
-      if (img) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: Date.now(),
-            sender: "ai",
-            text: "Generated image",
-            imageBase64: img.startsWith("data:") ? img : `data:image/png;base64,${img}`,
-          },
-        ]);
-      }
+      const targetId = imageTargetId ?? (messages.length ? messages[messages.length - 1].id : null);
+      await attachImageToMessage(imagePrompt, targetId, imageNegative);
       setShowImageModal(false);
       setImagePrompt("");
       setImageNegative("");
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          sender: "ai",
-          text: err?.response?.data?.detail || "Image generation failed.",
-        },
-      ]);
+      // handled inside attachImageToMessage
     } finally {
       setIsGeneratingImage(false);
+    }
+  };
+
+  const generateVideo = async () => {
+    const targetId = videoTargetId ?? (messages.length ? messages[messages.length - 1].id : null);
+    setIsGeneratingVideo(true);
+    try {
+      await attachVideoToMessage(videoPrompt, targetId, videoUseLastEmote);
+      setShowVideoModal(false);
+      setVideoPrompt("");
+    } catch (err) {
+      // handled in helper
+    } finally {
+      setIsGeneratingVideo(false);
     }
   };
 
@@ -426,6 +555,7 @@ function App() {
         text: displayReply || reply,
       };
       setMessages((prev) => [...prev, aiMsg]);
+      handleLLMTriggers(reply, aiMsg.id).catch((err) => console.warn("LLM trigger failed", err));
 
       if (autoTts && reply) {
         // Prefer inline audio from chat response; fallback to separate /tts call
@@ -719,11 +849,24 @@ function App() {
               {autoTts ? "Voice on" : "Voice off"}
             </button>
             <button
-              onClick={() => setShowImageModal(true)}
+              onClick={() => {
+                setImageTargetId(messages.length ? messages[messages.length - 1].id : null);
+                setShowImageModal(true);
+              }}
               className="flex items-center gap-2 text-xs px-3 py-2 rounded-full bg-pink-600/80 hover:bg-pink-500 transition"
             >
               <ImageIcon size={16} />
               Generate image
+            </button>
+            <button
+              onClick={() => {
+                setVideoTargetId(messages.length ? messages[messages.length - 1].id : null);
+                setShowVideoModal(true);
+              }}
+              className="flex items-center gap-2 text-xs px-3 py-2 rounded-full bg-indigo-600/80 hover:bg-indigo-500 transition"
+            >
+              <Play size={16} />
+              Generate video
             </button>
             <Settings size={20} className="text-gray-400 hidden md:block" />
           </div>
@@ -743,6 +886,16 @@ function App() {
                 {msg.imageBase64 && (
                   <div className="mt-3 overflow-hidden rounded-xl border border-gray-700 bg-black/30">
                     <img src={msg.imageBase64} alt="Generated" className="w-full h-auto" />
+                  </div>
+                )}
+                {msg.videoUrl && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-gray-700 bg-black/30">
+                    <video
+                      src={msg.videoUrl}
+                      controls
+                      poster={msg.videoPreview || msg.imageBase64}
+                      className="w-full rounded-lg"
+                    />
                   </div>
                 )}
                 {msg.audioUrl && (
@@ -852,9 +1005,22 @@ function App() {
                 <button
                   type="button"
                   className="p-2 text-gray-400 hover:text-pink-500 transition"
-                  onClick={() => setShowImageModal(true)}
+                  onClick={() => {
+                    setImageTargetId(messages.length ? messages[messages.length - 1].id : null);
+                    setShowImageModal(true);
+                  }}
                 >
                   <ImageIcon size={20} />
+                </button>
+                <button
+                  type="button"
+                  className="p-2 text-gray-400 hover:text-indigo-400 transition"
+                  onClick={() => {
+                    setVideoTargetId(messages.length ? messages[messages.length - 1].id : null);
+                    setShowVideoModal(true);
+                  }}
+                >
+                  <Play size={18} />
                 </button>
                 <button
                   type="button"
@@ -1177,6 +1343,56 @@ function App() {
                 className="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-500 disabled:bg-gray-700 disabled:text-gray-400"
               >
                 {isGeneratingImage ? "Generating..." : "Generate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVideoModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">Generate 60s clip</h3>
+              <button onClick={() => setShowVideoModal(false)} className="text-gray-400 hover:text-white">
+                &times;
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-400">Prompt (optional)</label>
+                <textarea
+                  value={videoPrompt}
+                  onChange={(e) => setVideoPrompt(e.target.value)}
+                  className="w-full mt-1 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 outline-none focus:border-indigo-500"
+                  rows={3}
+                  placeholder="Leave empty to reuse the latest *emote* as prompt."
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={videoUseLastEmote}
+                  onChange={(e) => setVideoUseLastEmote(e.target.checked)}
+                  className="accent-indigo-500"
+                />
+                If prompt is empty, use the last posted *emote* as the scene hook.
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setShowVideoModal(false)}
+                className="px-4 py-2 rounded-lg border border-gray-700 text-gray-300 hover:bg-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={generateVideo}
+                disabled={isGeneratingVideo}
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-400 flex items-center gap-2"
+              >
+                {isGeneratingVideo && <Loader2 size={16} className="animate-spin" />}
+                {isGeneratingVideo ? "Rendering..." : "Generate"}
               </button>
             </div>
           </div>
