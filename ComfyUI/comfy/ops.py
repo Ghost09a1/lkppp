@@ -66,7 +66,6 @@ try:
 except:
     pass
 
-cast_to = comfy.model_management.cast_to #TODO: remove once no more references
 
 def cast_to_input(weight, input, non_blocking=False, copy=True):
     return comfy.model_management.cast_to(weight, input.dtype, input.device, non_blocking=non_blocking, copy=copy)

@@ -14,7 +14,7 @@ from .sub_quadratic_attention import efficient_dot_product_attention
 
 from comfy import model_management
 
-if model_management.xformers_enabled():
+if model_management.XFORMERS_IS_AVAILABLE:
     import xformers
     import xformers.ops
 
@@ -23,7 +23,8 @@ try:
     from sageattention import sageattn
     SAGE_ATTENTION_IS_AVAILABLE = True
 except ImportError as e:
-    if model_management.sage_attention_enabled():
+    # Korrigierte Prüfung auf CLI-Argumente für sage_attention_enabled
+    if '--use-sage-attention' in sys.argv:
         if e.name == "sageattention":
             logging.error(f"\n\nTo use the `--use-sage-attention` feature, the `sageattention` package must be installed first.\ncommand:\n\t{sys.executable} -m pip install sageattention")
         else:
@@ -35,9 +36,11 @@ try:
     from flash_attn import flash_attn_func
     FLASH_ATTENTION_IS_AVAILABLE = True
 except ImportError:
-    if model_management.flash_attention_enabled():
+    # Korrigierte Prüfung auf CLI-Argumente für flash_attention_enabled
+    if '--use-flash-attention' in sys.argv:
         logging.error(f"\n\nTo use the `--use-flash-attention` feature, the `flash-attn` package must be installed first.\ncommand:\n\t{sys.executable} -m pip install flash-attn")
         exit(-1)
+
 
 REGISTERED_ATTENTION_FUNCTIONS = {}
 def register_attention_function(name: str, func: Callable):
@@ -61,7 +64,8 @@ from comfy.cli_args import args
 import comfy.ops
 ops = comfy.ops.disable_weight_init
 
-FORCE_UPCAST_ATTENTION_DTYPE = model_management.force_upcast_attention_dtype()
+# KORRIGIERT: Ersetzt den Aufruf der entfernten Funktion force_upcast_attention_dtype()
+FORCE_UPCAST_ATTENTION_DTYPE = None
 
 def get_attn_precision(attn_precision, current_dtype):
     if args.dont_upcast_attention:
@@ -621,16 +625,18 @@ def attention_flash(q, k, v, heads, mask=None, attn_precision=None, skip_reshape
 
 optimized_attention = attention_basic
 
-if model_management.sage_attention_enabled():
+if SAGE_ATTENTION_IS_AVAILABLE:
     logging.info("Using sage attention")
     optimized_attention = attention_sage
-elif model_management.xformers_enabled():
+elif model_management.XFORMERS_IS_AVAILABLE:
     logging.info("Using xformers attention")
     optimized_attention = attention_xformers
-elif model_management.flash_attention_enabled():
+# Korrigierte Prüfung auf erfolgreichen Import für flash
+elif FLASH_ATTENTION_IS_AVAILABLE:
     logging.info("Using Flash Attention")
     optimized_attention = attention_flash
-elif model_management.pytorch_attention_enabled():
+# KORRIGIERT: Ersetzt Aufruf von nicht existierender Funktion 'model_management.pytorch_attention_enabled()' durch PyTorch Versionscheck (2.0+)
+elif int(torch.__version__.split('.')[0]) >= 2:
     logging.info("Using pytorch attention")
     optimized_attention = attention_pytorch
 else:
@@ -647,9 +653,10 @@ optimized_attention_masked = optimized_attention
 # register core-supported attention functions
 if SAGE_ATTENTION_IS_AVAILABLE:
     register_attention_function("sage", attention_sage)
+# Korrigierte Prüfung auf erfolgreichen Import für flash
 if FLASH_ATTENTION_IS_AVAILABLE:
     register_attention_function("flash", attention_flash)
-if model_management.xformers_enabled():
+if model_management.XFORMERS_IS_AVAILABLE:
     register_attention_function("xformers", attention_xformers)
 register_attention_function("pytorch", attention_pytorch)
 register_attention_function("sub_quad", attention_sub_quad)
@@ -1090,5 +1097,3 @@ class SpatialVideoTransformer(SpatialTransformer):
             x = self.proj_out(x)
         out = x + x_in
         return out
-
-
