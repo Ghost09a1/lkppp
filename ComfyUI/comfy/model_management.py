@@ -27,6 +27,32 @@ import platform
 import weakref
 import gc
 
+# ---------------------------------------------------------------------------
+# Device-Helper: CPU / MPS / CUDA
+# ---------------------------------------------------------------------------
+
+def is_device_type(device, dev_type: str) -> bool:
+    """
+    Normalisiert Geräteangaben:
+    - device kann torch.device oder ein String wie "cpu" sein
+    """
+    if hasattr(device, "type"):
+        return device.type == dev_type
+    return str(device) == dev_type
+
+
+def is_device_cpu(device) -> bool:
+    return is_device_type(device, "cpu")
+
+
+def is_device_mps(device) -> bool:
+    return is_device_type(device, "mps")
+
+
+def is_device_cuda(device) -> bool:
+    return is_device_type(device, "cuda")
+
+
 class VRAMState(Enum):
 	DISABLED = 0 	#No vram present: no need to move models to vram
 	NO_VRAM = 1 	#Very low vram: enable all the options to save vram
