@@ -34,6 +34,19 @@ if ($cfg.llm.mode -eq "gguf") {
     Write-Host "LLM mode = ollama (stelle sicher, dass der Ollama-Dienst läuft)." -ForegroundColor Yellow
 }
 
+# Image Generation Check
+if ($cfg.media.image_mode -eq "sdnext") {
+    Write-Host "Image generation mode is 'sdnext'. Make sure the SD.Next server is running on $($cfg.media.sdnext_host)." -ForegroundColor Yellow
+} elseif ($cfg.media.image_mode -eq "local") {
+    $sdxlModelPath = Join-Path $root $cfg.media.sdxl_model_path
+    if (!(Test-Path $sdxlModelPath)) {
+        Write-Warning "Image generation mode is 'local' but the model was not found at $sdxlModelPath. Image generation will fail."
+    } else {
+        Write-Host "Image generation mode is 'local'. The model will be loaded by the backend on first use." -ForegroundColor Green
+    }
+}
+
+
 # Backend (API) -> use core (DB, chat, TTS routes)
 Start-Process powershell -ArgumentList @(
     "-NoExit",
