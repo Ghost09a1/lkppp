@@ -21,6 +21,7 @@ if (Test-Path $venvPython) {
 
 # --------------------------------------------------------------------
 # LLM server (llama.cpp) based on settings.json
+# -> jetzt auch in eigenem PowerShell-Fenster mit -NoExit
 # --------------------------------------------------------------------
 $llamaExe  = Join-Path $root "bins\llama-server.exe"
 $modelPath = Join-Path $root "models\llm\MN-12B-Celeste-V1.9-Q4_K_M.gguf"
@@ -30,6 +31,7 @@ if (Test-Path $llamaExe) {
         Write-Warning "LLM model not found at '$modelPath' - LLM server may fail to start."
     }
 
+    # Werte aus settings.json:
     # host: 127.0.0.1
     # port: 8081
     # n_ctx: 8192
@@ -37,18 +39,10 @@ if (Test-Path $llamaExe) {
     # gpu_layers: 0
     # batch: 128
 
-    $llamaArgs = @(
-        "--model", $modelPath,
-        "--host", "127.0.0.1",
-        "--port", "8081",
-        "--ctx-size", "8192",
-        "--threads", "12",
-        "--n-gpu-layers", "0",
-        "--batch-size", "128"
-    )
+    $psCommand = "Set-Location '$root'; & '$llamaExe' --model '$modelPath' --host 127.0.0.1 --port 8081 --ctx-size 8192 --threads 12 --n-gpu-layers 0 --batch-size 128"
 
-    Write-Host "Starting LLM server (llama-server.exe) on port 8081..."
-    Start-Process -FilePath $llamaExe -WorkingDirectory $root -ArgumentList $llamaArgs
+    Write-Host "Starting LLM server (llama-server.exe) on port 8081 in separate PowerShell window..."
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", $psCommand
 } else {
     Write-Host "LLM server binary not found at '$llamaExe', skipping LLM server."
 }
