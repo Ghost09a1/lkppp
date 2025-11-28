@@ -1,12 +1,3 @@
-outputs/
-logs/
+# Ignore large model files and build artifacts
 models/
-__pycache__/
-*.pyc
-.venv/
-rvc_webui/venv/
-.vscode/
-*.wav
-*.pth
-*.pt
-*.ckpt
+.idx/
