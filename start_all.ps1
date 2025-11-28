@@ -1,107 +1,129 @@
 $ErrorActionPreference = "Stop"
 
+# ------------------------------------------------------------
+# 0) Root & Settings
+# ------------------------------------------------------------
 $root = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $root
 
-# Projekt-venv (für Backend, TTS usw.)
+# Haupt-venv (Backend, TTS)
 $venvPy = Join-Path $root ".venv\Scripts\python.exe"
-if (!(Test-Path $venvPy)) {
-    Write-Error "Konnte .venv\Scripts\python.exe nicht finden. Bitte zuerst .venv anlegen/aktivieren."
+if (-not (Test-Path $venvPy)) {
+    Write-Error ".venv\Scripts\python.exe nicht gefunden. Bitte .venv anlegen und Dependencies installieren."
 }
 
+# Settings laden
 $settingsPath = Join-Path $root "config\settings.json"
-if (!(Test-Path $settingsPath)) {
-    Write-Error "config/settings.json fehlt."
+if (-not (Test-Path $settingsPath)) {
+    Write-Error "config\settings.json fehlt."
 }
 $cfg = Get-Content $settingsPath -Raw | ConvertFrom-Json
 
-# Llama.cpp Server (gguf) falls konfiguriert und Dateien vorhanden
-if ($cfg.llm.mode -eq "gguf") {
-    $llamaBin = Join-Path $root $cfg.llm.llama_cpp_server.binary_path
-    $llamaModel = Join-Path $root $cfg.llm.llama_cpp_server.model_path
-    if ((Test-Path $llamaBin) -and (Test-Path $llamaModel)) {
-        $port    = $cfg.llm.llama_cpp_server.port
-        $threads = $cfg.llm.llama_cpp_server.n_threads
-        $ctx     = $cfg.llm.llama_cpp_server.n_ctx
-        $batch   = $cfg.llm.llama_cpp_server.batch
-        $gpu     = $cfg.llm.llama_cpp_server.gpu_layers
-
-        $cmd = "cd `"$root`"; `"$llamaBin`" -m `"$llamaModel`" --port $port --ctx-size $ctx --threads $threads --batch-size $batch --host 127.0.0.1"
-        if ($gpu -gt 0) { $cmd += " -ngl $gpu" }
-
-        Start-Process powershell -ArgumentList @("-NoExit", "-Command", $cmd)
+# Logs-Ordner
+if ($cfg.paths -and $cfg.paths.logs_dir) {
+    $logsDir = Join-Path $root $cfg.paths.logs_dir
+    if (-not (Test-Path $logsDir)) {
+        New-Item -ItemType Directory -Path $logsDir | Out-Null
     }
-    else {
-        Write-Warning "llama.cpp binary oder Modell fehlt: $llamaBin / $llamaModel (LLM wird ausfallen)."
-    }
+}
+
+$backendHost = if ($cfg.backend_host) { $cfg.backend_host } else { "127.0.0.1" }
+$backendPort = if ($cfg.backend_port) { $cfg.backend_port } else { 8000 }
+
+$uiHost      = if ($cfg.ui_host) { $cfg.ui_host } else { "127.0.0.1" }
+$uiPort      = if ($cfg.ui_port) { $cfg.ui_port } else { $backendPort }
+$openBrowser = $cfg.ui.open_browser
+
+# ------------------------------------------------------------
+# 1) Backend API (FastAPI)
+# ------------------------------------------------------------
+Write-Host "Starte Backend auf $backendHost`:$backendPort ..." -ForegroundColor Cyan
+
+Start-Process -FilePath $venvPy `
+    -WorkingDirectory $root `
+    -ArgumentList @(
+        "-m", "uvicorn", "backend.core:app",
+        "--host", $backendHost,
+        "--port", $backendPort.ToString()
+    ) `
+    -WindowStyle Minimized
+
+# ------------------------------------------------------------
+# 2) TTS-Server (optional)
+# ------------------------------------------------------------
+$media       = $cfg.media
+$ttsEnabled  = $media.tts_enabled
+$ttsPort     = if ($media.tts_port) { $media.tts_port } else { 8020 }
+$ttsModelRel = $media.tts_model_path
+$ttsModelAbs = if ($ttsModelRel) { Join-Path $root $ttsModelRel } else { $null }
+
+if ($ttsEnabled -and $ttsModelAbs -and (Test-Path $ttsModelAbs)) {
+    Write-Host "Starte TTS-Server auf Port $ttsPort ..." -ForegroundColor Cyan
+
+    Start-Process -FilePath $venvPy `
+        -WorkingDirectory $root `
+        -ArgumentList @(
+            "-m", "uvicorn", "backend.tts_server:app",
+            "--host", "127.0.0.1",
+            "--port", $ttsPort.ToString()
+        ) `
+        -WindowStyle Minimized
 }
 else {
-    Write-Host "LLM mode = ollama (stelle sicher, dass der Ollama-Dienst läuft)." -ForegroundColor Yellow
+    Write-Host "TTS deaktiviert oder Modell fehlt – TTS-Server wird nicht gestartet." -ForegroundColor Yellow
 }
 
-# Image Generation Check
-if ($cfg.media.image_mode -eq "sdnext") {
-    Write-Host "Image generation mode is 'sdnext'. Make sure the SD.Next server is running on $($cfg.media.sdnext_host)." -ForegroundColor Yellow
-}
-elseif ($cfg.media.image_mode -eq "local") {
-    $sdxlModelPath = Join-Path $root $cfg.media.sdxl_model_path
-    if (!(Test-Path $sdxlModelPath)) {
-        Write-Warning "Image generation mode is 'local' but the model was not found at $sdxlModelPath. Image generation will fail."
+# ------------------------------------------------------------
+# 3) ComfyUI (eigene venv + DirectML für Intel Arc)
+# ------------------------------------------------------------
+$comfyRoot   = Join-Path $root "ComfyUI"
+$comfyVenvPy = Join-Path $comfyRoot "venv\Scripts\python.exe"
+
+if ($media.comfy_enabled -and (Test-Path $comfyRoot) -and (Test-Path $comfyVenvPy)) {
+
+    # Port aus comfy_host lesen (z.B. http://127.0.0.1:8002)
+    $comfyHost = $media.comfy_host
+    try {
+        $uri = [System.Uri]$comfyHost
+        if ($uri.Port -gt 0) {
+            $comfyPort = $uri.Port
+        }
+        else {
+            $comfyPort = 8188
+        }
     }
-    else {
-        Write-Host "Image generation mode is 'local'. The model will be loaded by the backend on first use." -ForegroundColor Green
+    catch {
+        $comfyPort = 8188
     }
+
+    Write-Host "Starte ComfyUI auf Port $comfyPort (DirectML / Intel Arc)..." -ForegroundColor Cyan
+    Write-Host "ComfyUI-venv: $comfyVenvPy" -ForegroundColor DarkGray
+    Write-Host "torch-directml ist dort ja bereits installiert." -ForegroundColor DarkGray
+
+    Start-Process -FilePath $comfyVenvPy `
+        -WorkingDirectory $comfyRoot `
+        -ArgumentList @(
+            "main.py",
+            "--listen", "127.0.0.1",
+            "--port", $comfyPort.ToString(),
+            "--directml",
+            "--highvram"
+        ) `
+        -WindowStyle Minimized
 }
-elseif ($cfg.media.image_mode -eq "comfy") {
-    Write-Host "Image generation mode is 'comfy'. ComfyUI wird über $($cfg.media.comfy_host) angesprochen." -ForegroundColor Green
-}
-
-# Backend (API) -> use core (DB, chat, TTS routes)
-Start-Process powershell -ArgumentList @(
-    "-NoExit",
-    "-Command",
-    "cd `"$root`"; `"$venvPy`" -m uvicorn backend.core:app --host 0.0.0.0 --port 8000"
-)
-
-# TTS-Server
-Start-Process powershell -ArgumentList @(
-    "-NoExit",
-    "-Command",
-    "cd `"$root`"; `"$venvPy`" backend/tts_server.py"
-)
-
-# --- ComfyUI Server Start (mit eigenem venv) ---
-$comfyUIRoot   = Join-Path $root "ComfyUI"
-$comfyVenvPy   = Join-Path $comfyUIRoot "venv\Scripts\python.exe"
-
-if (!(Test-Path $comfyVenvPy)) {
-    Write-Warning "ComfyUI venv\Scripts\python.exe nicht gefunden, verwende Projekt-venv für ComfyUI (torchsde muss dort installiert sein)."
-    $comfyVenvPy = $venvPy
+else {
+    Write-Host "ComfyUI ist in settings.json deaktiviert oder ComfyUI\venv fehlt – ComfyUI wird nicht gestartet." -ForegroundColor Yellow
 }
 
-# Port aus comfy_host ziehen (z.B. http://127.0.0.1:8002)
-$comfyHost = $cfg.media.comfy_host
-try {
-    $uri = [System.Uri]$comfyHost
-    $comfyPort = if ($uri.Port -gt 0) { $uri.Port } else { 8188 }
+# ------------------------------------------------------------
+# 4) Browser auf UI öffnen
+# ------------------------------------------------------------
+if ($openBrowser) {
+    $url = "http://$uiHost`:$uiPort/"
+    Write-Host "Öffne Browser auf $url ..." -ForegroundColor Green
+    Start-Process $url
 }
-catch {
-    $comfyPort = 8188
-}
 
-Start-Process powershell -ArgumentList @(
-    "-NoExit",
-    "-Command",
-    "cd `"$comfyUIRoot`"; `"$comfyVenvPy`" main.py --listen 127.0.0.1 --port $comfyPort --oneapi-device-selector auto"
-)
-
-# Frontend: Wir serven das gebaute UI über das Backend (Port 8000), kein Vite-Devserver nötig.
-# Falls noch alte node-Prozesse laufen, beenden.
-$nodeProcs = Get-Process node -ErrorAction SilentlyContinue
-if ($nodeProcs) { $nodeProcs | Stop-Process -Force -ErrorAction SilentlyContinue }
-
-# Browser öffnen (Backend liefert das UI)
-Start-Process "http://localhost:8000/"
-
-Write-Host "Gestartet: Backend (8000), TTS (8020), ggf. llama.cpp ($($cfg.llm.llama_cpp_server.port)), ComfyUI ($comfyPort)." -ForegroundColor Green
-Write-Host "Falls Ports belegt sind, Prozesse beenden (node/python) und erneut ausführen."
+Write-Host ""
+Write-Host "Fertig. Backend, (optional) TTS und ComfyUI laufen jetzt." -ForegroundColor Green
+Write-Host "Bei Problemen in die jeweiligen Fenster schauen." -ForegroundColor Green
