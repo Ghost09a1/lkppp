@@ -1160,11 +1160,12 @@ if "force_channels_last" not in globals():
 # -------- Casting-Helper, die comfy.ops erwartet ----------------------------
 
 if "cast_to" not in globals():
-    def cast_to(weight, dtype=None, device=None, non_blocking=False, copy=False):
+    def cast_to(weight, dtype=None, device=None,
+                non_blocking=False, copy=False, stream=None):
         """
         Vereinfachte Variante von ComfyUIs cast_to:
 
-        * ignoriert non_blocking auf CPU/DirectML sicher
+        * ignoriert non_blocking und stream auf CPU/DirectML/XPU
         * castet auf gewünschtes Device + Dtype
         """
         target_device = device or weight.device
@@ -1176,8 +1177,9 @@ if "cast_to" not in globals():
             and target_dtype == weight.dtype):
             return weight
 
-        # non_blocking wird hier absichtlich ignoriert
+        # non_blocking/stream werden hier absichtlich ignoriert
         return weight.to(device=target_device, dtype=target_dtype, copy=copy)
+
 
 
 if "cast_to_device" not in globals():
