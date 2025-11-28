@@ -102,7 +102,8 @@ class MediaRouter:
                         pass
                 self._sd_pipe = pipe
                 return pipe
-            except Exception:
+            except Exception as exc:
+                logging.getLogger("mycandy.core").error("Failed to load local SDXL model: %s", exc)
                 self._sd_pipe = None
                 return None
 
@@ -177,7 +178,7 @@ class MediaRouter:
                 return {"ok": False, "error": "No GPU/DirectML device available. Install CUDA or torch-directml for ARC."}
             pipe = await self._ensure_sdxl()
             if pipe is None:
-                return {"ok": False, "error": "Local SDXL pipeline not available."}
+                return {"ok": False, "error": "Local SDXL model not found or failed to load. Check 'sdxl_model_path' in config/settings.json."}
             try:
                 generator = None
                 seed = self.config["media"].get("image_seed")
@@ -200,7 +201,7 @@ class MediaRouter:
             except Exception as exc:
                 logging.getLogger("mycandy.core").warning("Local SDXL failed on %s: %s", self._device, exc)
                 msg = str(exc).lower()
-                if "not enough gpu video memory" in msg or "could not allocate tensor" in msg:
+                if "not enough gpu video memory" in msg or "could not allocate tensor" in msg or "out of memory" in msg:
                     try:
                         new_w = max(384, width // 2)
                         new_h = max(512, height // 2)
@@ -225,7 +226,8 @@ class MediaRouter:
                         return {"ok": True, "images_base64": [b64], "device": str(self._device), "scaled": True}
                     except Exception as exc_retry:
                         logging.getLogger("mycandy.core").warning("SDXL retry on %s failed: %s", self._device, exc_retry)
-                return {"ok": False, "error": f"Local SDXL failed: {exc}"}
+                        return {"ok": False, "error": "CUDA out of memory. Your GPU does not have enough video memory to run the Stable Diffusion model, even after automatically attempting to run at a lower resolution. Please close other GPU-intensive applications or consider using 'image_mode: \"sdnext\"' in your config/settings.json to offload to a dedicated image generation server."}
+                return {"ok": False, "error": f"Local SDXL failed due to an unexpected error: {exc}"}
 
         if mode == "sdnext":
             sdreq = _call_sdnext()
