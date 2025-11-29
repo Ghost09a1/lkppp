@@ -32,7 +32,8 @@ $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 if (Test-Path $venvPython) {
     $python = $venvPython
     Write-Host "Using venv Python: $python"
-} else {
+}
+else {
     $python = "python"
     Write-Host "Using system Python. This might cause issues if dependencies are not installed globally."
 }
@@ -70,10 +71,12 @@ if ($config.llm.mode -eq "gguf") {
         $llamaCommand = "& '$llamaExe' $($llamaArgs -join ' ')"
         Start-NewPowerShell -Name "LLaMA Server" -Command $llamaCommand
 
-    } else {
+    }
+    else {
         Write-Warning "LLaMA server binary not found at '$llamaExe', skipping."
     }
-} else {
+}
+else {
     Write-Host "LLM mode is '$($config.llm.mode)', skipping dedicated LLaMA server start."
 }
 
@@ -81,14 +84,42 @@ if ($config.llm.mode -eq "gguf") {
 # --- 3. Start ComfyUI Server ---
 if ($config.media.comfy_enabled) {
     $comfyDir = Join-Path $root "ComfyUI"
-    $comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
-    if (Test-Path $comfyLauncher) {
+    
+    # Check if ComfyUI has its own Python (standalone)
+    $comfyPython = Join-Path $comfyDir "python_standalone\python.exe"
+    $comfyMain = Join-Path $comfyDir "main.py"
+    
+    if (Test-Path $comfyDir) {
         Write-Host "Starting ComfyUI..."
-        Start-Process -FilePath $comfyLauncher -WorkingDirectory $comfyDir
-    } else {
-        Write-Warning "ComfyUI launcher not found at '$comfyLauncher', skipping."
+        
+        # Option 1: Use ComfyUI's own launcher if it exists
+        $comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
+        if (Test-Path $comfyLauncher) {
+            Write-Host "Using ComfyUI's launcher: $comfyLauncher"
+            # Start in ComfyUI's directory to ensure paths work
+            Start-Process -FilePath $comfyLauncher -WorkingDirectory $comfyDir
+        }
+        # Option 2: Direct Python invocation if standalone Python exists
+        elseif ((Test-Path $comfyPython) -and (Test-Path $comfyMain)) {
+            Write-Host "Using ComfyUI standalone Python: $comfyPython"
+            $comfyCommand = "Set-Location '$comfyDir'; & '$comfyPython' '$comfyMain' --port 8002"
+            Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
+        }
+        # Option 3: Use system/venv Python
+        elseif (Test-Path $comfyMain) {
+            Write-Host "Using system Python for ComfyUI"
+            $comfyCommand = "Set-Location '$comfyDir'; & '$python' '$comfyMain' --port 8002"
+            Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
+        }
+        else {
+            Write-Warning "ComfyUI installation incomplete. Neither launcher nor main.py found in '$comfyDir'."
+        }
     }
-} else {
+    else {
+        Write-Warning "ComfyUI directory not found at '$comfyDir', skipping."
+    }
+}
+else {
     Write-Host "ComfyUI is disabled in settings.json, skipping."
 }
 
@@ -109,10 +140,12 @@ if (Test-Path $rvcDir) {
         $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --listen-port 7866"
         Start-NewPowerShell -Name "RVC WebUI" -Command $rvcCommand
         
-    } else {
+    }
+    else {
         Write-Warning "RVC script 'infer-web.py' not found in '$rvcDir', skipping."
     }
-} else {
+}
+else {
     Write-Host "RVC directory not found, skipping."
 }
 
