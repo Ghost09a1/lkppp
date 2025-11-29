@@ -53,7 +53,7 @@
         "image_mode": "comfy",
 
         "comfy_enabled": true,
-        "comfy_host": "http://127.0.0.1:8188",
+        "comfy_host": "http://127.0.0.1:8002",
         "comfy_workflow_path": "comfy_workflows/txt2img_api.json",
 
         "svd_model_id": "stabilityai/stable-video-diffusion-img2vid-xt",
