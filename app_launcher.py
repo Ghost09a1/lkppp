@@ -19,44 +19,18 @@ def wait_for_port(port: int, host: str = "127.0.0.1", timeout: int = 30) -> bool
     import socket
 
     start = time.time()
+    print(f"[launcher] waiting for {host}:{port}...")
     while time.time() - start < timeout:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(1)
             try:
                 sock.connect((host, port))
+                print(f"[launcher] {host}:{port} is ready.")
                 return True
             except (ConnectionRefusedError, socket.timeout, OSError):
                 time.sleep(0.5)
+    print(f"[launcher] timeout waiting for {host}:{port}.")
     return False
-
-
-def start_llama_server(cfg: dict, logs_dir: Path) -> Optional[subprocess.Popen]:
-    binary = ROOT / cfg["llm"]["llama_cpp_server"]["binary_path"]
-    model = ROOT / cfg["llm"]["llama_cpp_server"]["model_path"]
-    port = cfg["llm"]["llama_cpp_server"]["port"]
-    if not binary.exists() or not model.exists():
-        print("[launcher] llama.cpp server skipped (binary or model missing)")
-        return None
-    cmd = [
-        str(binary),
-        "-m",
-        str(model),
-        "--port",
-        str(port),
-        "--ctx-size",
-        str(cfg["llm"]["llama_cpp_server"]["n_ctx"]),
-        "--threads",
-        str(cfg["llm"]["llama_cpp_server"]["n_threads"]),
-        "--batch-size",
-        str(cfg["llm"]["llama_cpp_server"]["batch"]),
-        "--host",
-        cfg["backend_host"],
-    ]
-    if cfg["llm"]["llama_cpp_server"]["gpu_layers"] > 0:
-        cmd += ["-ngl", str(cfg["llm"]["llama_cpp_server"]["gpu_layers"])]
-    log_file = logs_dir / "llama_cpp.log"
-    print(f"[launcher] starting llama.cpp server on port {port}")
-    return subprocess.Popen(cmd, stdout=log_file.open("a", encoding="utf-8"), stderr=subprocess.STDOUT)
 
 
 def start_uvicorn(
@@ -73,7 +47,7 @@ def start_uvicorn(
         "--port",
         str(port),
     ]
-    print(f"[launcher] starting {name} on {host}:{port}")
+    print(f"[launcher] starting {name} on {host}:{port}...")
     return subprocess.Popen(cmd, stdout=log_file.open("a", encoding="utf-8"), stderr=subprocess.STDOUT)
 
 
@@ -84,18 +58,17 @@ def main():
 
     procs: List[subprocess.Popen] = []
     try:
+        # LLM server is now started by start_all.ps1, so we just wait for it if needed.
         if cfg["llm"]["mode"] == "gguf":
-            llama_proc = start_llama_server(cfg, logs_dir)
-            if llama_proc:
-                procs.append(llama_proc)
-                if not wait_for_port(
-                    cfg["llm"]["llama_cpp_server"]["port"],
-                    cfg["backend_host"],
-                    timeout=60,
-                ):
-                    print("[launcher] llama.cpp server did not respond in time")
+            print("[launcher] GGUF mode detected. Waiting for LLaMA server to become available...")
+            if not wait_for_port(
+                cfg["llm"]["llama_cpp_server"]["port"],
+                cfg["backend_host"],
+                timeout=120, # Increased timeout for model loading
+            ):
+                print("[launcher] CRITICAL: LLaMA server did not respond in time.")
         else:
-            print("[launcher] using Ollama mode, assuming local daemon is running")
+            print("[launcher] Ollama mode detected. Assuming local daemon is running.")
 
         if cfg["media"].get("tts_enabled"):
             tts_port = cfg["media"]["tts_port"]
@@ -103,9 +76,9 @@ def main():
                 "backend.tts_server:app", "127.0.0.1", tts_port, logs_dir, "tts"
             )
             procs.append(tts_proc)
-            wait_for_port(tts_port, timeout=20)
+            wait_for_port(tts_port, timeout=30)
         else:
-            print("[launcher] TTS disabled in config")
+            print("[launcher] TTS is disabled in config, skipping.")
 
         backend_proc = start_uvicorn(
             "backend.core:app",
@@ -118,30 +91,35 @@ def main():
         if wait_for_port(
             cfg.get("backend_port", 8000),
             cfg.get("backend_host", "127.0.0.1"),
-            timeout=30,
+            timeout=60, # Increased timeout for backend startup
         ):
             url = f"http://{cfg.get('backend_host','127.0.0.1')}:{cfg.get('backend_port',8000)}/ui"
             if cfg["ui"].get("open_browser", True):
+                print(f"[launcher] Backend is ready. Opening {url} in browser...")
                 webbrowser.open(url)
-            print(f"[launcher] backend ready at {url}")
+            else:
+                print(f"[launcher] Backend is ready at {url}")
         else:
-            print("[launcher] backend failed to start within timeout")
+            print("[launcher] CRITICAL: Backend failed to start within the timeout period.")
 
-        # block until interrupted
+        # Keep this script alive to manage child processes
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\n[launcher] shutting down...")
+        print("\n[launcher] Shutdown signal received. Terminating processes...")
     finally:
-        for proc in procs:
+        for proc in reversed(procs): # Terminate in reverse order of startup
             if proc and proc.poll() is None:
+                print(f"[launcher] Terminating process {proc.pid}...")
                 proc.terminate()
         for proc in procs:
             if proc:
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
+                    print(f"[launcher] Process {proc.pid} did not terminate gracefully, killing it.")
                     proc.kill()
+        print("[launcher] All processes have been shut down.")
 
 
 if __name__ == "__main__":
