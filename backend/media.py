@@ -180,24 +180,46 @@ class MediaRouter:
         except Exception as exc:
             return {"ok": False, "error": f"Invalid Comfy workflow JSON: {exc}"}
 
-        # Platzhalter im Workflow ersetzen
-        def replace_placeholders(obj):
-            if isinstance(obj, dict):
-                return {k: replace_placeholders(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [replace_placeholders(v) for v in obj]
-            if isinstance(obj, str):
-                mapping = {
-                    "{{prompt}}": prompt,
-                    "{{negative}}": negative,
-                    "{{steps}}": steps,
-                    "{{width}}": width,
-                    "{{height}}": height,
-                }
-                return mapping.get(obj, obj)
-            return obj
+        # Get checkpoint name (from config or auto-detect)
+        checkpoint_name = (media_cfg.get("comfy_checkpoint") or "").strip()
+        
+        async with httpx.AsyncClient(timeout=120) as client:
+            if not checkpoint_name:
+                # Query ComfyUI for available checkpoints
+                try:
+                    obj_info = await client.get(f"{base_url}/object_info/CheckpointLoaderSimple")
+                    obj_info.raise_for_status()
+                    info_data = obj_info.json()
+                    available_checkpoints = info_data.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name", [[]])[0]
+                    
+                    if not available_checkpoints:
+                        return {"ok": False, "error": "No checkpoints available in ComfyUI. Please install a model in ComfyUI/models/checkpoints/"}
+                    
+                    checkpoint_name = available_checkpoints[0]
+                    logging.getLogger("mycandy.core").info("Auto-selected ComfyUI checkpoint: %s", checkpoint_name)
+                except Exception as exc:
+                    logging.getLogger("mycandy.core").error("Failed to query ComfyUI checkpoints: %s", exc)
+                    return {"ok": False, "error": f"Failed to query ComfyUI for available checkpoints: {exc}"}
+        
+            # Platzhalter im Workflow ersetzen
+            def replace_placeholders(obj):
+                if isinstance(obj, dict):
+                    return {k: replace_placeholders(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [replace_placeholders(v) for v in obj]
+                if isinstance(obj, str):
+                    mapping = {
+                        "{{prompt}}": prompt,
+                        "{{negative}}": negative,
+                        "{{steps}}": steps,
+                        "{{width}}": width,
+                        "{{height}}": height,
+                        "{{checkpoint}}": checkpoint_name,
+                    }
+                    return mapping.get(obj, obj)
+                return obj
 
-        wf = replace_placeholders(wf)
+            wf = replace_placeholders(wf)
         client_id = str(uuid.uuid4())
 
         async with httpx.AsyncClient(timeout=120) as client:
