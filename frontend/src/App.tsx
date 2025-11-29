@@ -244,7 +244,7 @@ function App() {
         mediaRecorderRef.current.stop();
       }
       if (audioCtxRef.current) {
-        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current.close().catch(() => { });
       }
     };
   }, []);
@@ -415,12 +415,12 @@ function App() {
             return prev.map((m) =>
               m.id === targetId
                 ? {
-                    ...m,
-                    videoUrl,
-                    videoPreview: cover || m.videoPreview,
-                    sourcePrompt: usedPrompt || m.sourcePrompt,
-                    imageBase64: m.imageBase64 || cover || m.imageBase64,
-                  }
+                  ...m,
+                  videoUrl,
+                  videoPreview: cover || m.videoPreview,
+                  sourcePrompt: usedPrompt || m.sourcePrompt,
+                  imageBase64: m.imageBase64 || cover || m.imageBase64,
+                }
                 : m
             );
           }
@@ -460,7 +460,7 @@ function App() {
         (imageMatchOld && imageMatchOld[1]) ||
         "";
       if (imagePrompt.trim()) {
-        await attachImageToMessage(imagePrompt.trim(), targetMsgId).catch(() => {});
+        await attachImageToMessage(imagePrompt.trim(), targetMsgId).catch(() => { });
       }
 
       const videoPrompt =
@@ -468,7 +468,7 @@ function App() {
         (videoMatchOld && videoMatchOld[1]) ||
         "";
       if (videoMatchNew || videoMatchOld) {
-        await attachVideoToMessage(videoPrompt.trim(), targetMsgId, true).catch(() => {});
+        await attachVideoToMessage(videoPrompt.trim(), targetMsgId, true).catch(() => { });
       }
     },
     [attachImageToMessage, attachVideoToMessage]
@@ -630,7 +630,7 @@ function App() {
     mediaRecorderRef.current = null;
     recordStartRef.current = null;
     if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current.close().catch(() => { });
       audioCtxRef.current = null;
       analyserRef.current = null;
     }
@@ -702,7 +702,7 @@ function App() {
           micLevelTimerRef.current = null;
         }
         if (audioCtxRef.current) {
-          audioCtxRef.current.close().catch(() => {});
+          audioCtxRef.current.close().catch(() => { });
           audioCtxRef.current = null;
           analyserRef.current = null;
         }
@@ -714,7 +714,7 @@ function App() {
           return;
         }
         const file = new File([blob], `mic_${Date.now()}.webm`, { type: blob.type });
-        sendMessage(file);
+        transcribeAudio(file);
       };
       recorder.start();
       // VU meter setup
@@ -755,6 +755,35 @@ function App() {
     }
   };
 
+  const transcribeAudio = async (file: File) => {
+    setMicStatus("Transcribing...");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      // Optional: send language if character has one
+      if (selectedCharacter?.language) {
+        fd.append("language", selectedCharacter.language);
+      }
+
+      const res = await axios.post(`${API_URL}/stt`, fd);
+      const text = res.data?.text || "";
+
+      if (text) {
+        setInput((prev) => {
+          const trimmed = prev.trim();
+          return trimmed ? `${trimmed} ${text}` : text;
+        });
+      } else {
+        setRecordingError("No speech detected.");
+      }
+    } catch (err) {
+      console.error("STT failed", err);
+      setRecordingError("Transcription failed.");
+    } finally {
+      setMicStatus("");
+    }
+  };
+
   return (
     <div className="flex h-screen bg-candy-dark text-white font-sans overflow-hidden">
       <div className="w-80 bg-candy-card border-r border-gray-800 p-4 hidden md:flex flex-col">
@@ -775,25 +804,24 @@ function App() {
           {characters.map((char) => (
             <div
               key={char.id}
-              className={`w-full p-3 rounded-xl transition-all cursor-pointer ${
-                selectedCharId === char.id
+              className={`w-full p-3 rounded-xl transition-all cursor-pointer ${selectedCharId === char.id
                   ? "bg-pink-600/20 border border-pink-500/50"
                   : "hover:bg-gray-800 border border-transparent"
-              }`}
+                }`}
               onClick={() => setSelectedCharId(char.id)}
             >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden">
-                      {char.avatar_path ? (
-                        <img src={avatarUrl(char)} alt={char.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <User size={20} />
-                      )}
-                    </div>
-                    <div className="text-left">
-                      <div className="font-medium">{char.name}</div>
-                      <div className="text-xs text-gray-400">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden">
+                    {char.avatar_path ? (
+                      <img src={avatarUrl(char)} alt={char.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <User size={20} />
+                    )}
+                  </div>
+                  <div className="text-left">
+                    <div className="font-medium">{char.name}</div>
+                    <div className="text-xs text-gray-400">
                       {char.voice_model_path ? "RVC ready" : "No model yet"}
                     </div>
                   </div>
@@ -876,11 +904,10 @@ function App() {
           {messages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
               <div
-                className={`max-w-[80%] md:max-w-[60%] p-4 rounded-2xl shadow-lg backdrop-blur-sm ${
-                  msg.sender === "user"
+                className={`max-w-[80%] md:max-w-[60%] p-4 rounded-2xl shadow-lg backdrop-blur-sm ${msg.sender === "user"
                     ? "bg-pink-600 text-white rounded-br-sm"
                     : "bg-gray-800/80 border border-gray-700 text-gray-100 rounded-bl-sm"
-                }`}
+                  }`}
               >
                 <p className="leading-relaxed whitespace-pre-line">{msg.text}</p>
                 {msg.imageBase64 && (
@@ -1024,11 +1051,10 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  className={`p-2 rounded-full transition ${
-                    isRecording
+                  className={`p-2 rounded-full transition ${isRecording
                       ? "bg-red-600 text-white shadow-lg shadow-red-600/40"
                       : "text-gray-400 hover:text-pink-500 hover:bg-gray-700/60"
-                  }`}
+                    }`}
                   disabled={isSending || isAiSpeaking}
                   onMouseDown={() => !isSending && !isAiSpeaking && startRecording()}
                   onMouseUp={stopRecording}
