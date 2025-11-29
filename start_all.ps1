@@ -1,113 +1,130 @@
-# stop on errors
+# start_all.ps1
+# Starts:
+#  - MyCandyLocal (llama.cpp + backend) via launcher.py
+#  - ComfyUI XPU (Launcher / python)
+#  - RVC WebUI (own venv)
+# Each in a separate window.
+
 $ErrorActionPreference = "Stop"
 
-# repo root (folder where this script lives)
+# Repo root (folder where this script lives)
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 
 Write-Host "Repo root: $root"
 
-# prefer Python from venv
+# ===== Python for MyCandyLocal (.venv preferred) =====
 $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 if (Test-Path $venvPython) {
-    $python = $venvPython
-    Write-Host "Using venv Python: $python"
+    $pythonRoot = $venvPython
+    Write-Host "Using venv Python for main stack: $pythonRoot"
 } else {
-    $python = "python"
-    Write-Host "Using system Python"
+    $pythonRoot = "python"
+    Write-Host "Using system Python from PATH for main stack."
 }
 
-# --------------------------------------------------------------------
-# LLM server (llama.cpp) nach settings.json
-# --------------------------------------------------------------------
-$llamaExe  = Join-Path $root "bins\llama-server.exe"
-$modelPath = Join-Path $root "models\llm\MN-12B-Celeste-V1.9-Q4_K_M.gguf"
-
-if (Test-Path $llamaExe) {
-    if (-not (Test-Path $modelPath)) {
-        Write-Warning "LLM model not found at '$modelPath' - LLM server may fail to start."
-    }
-
-    # Werte aus settings.json:
-    # host: 127.0.0.1
-    # port: 8081
-    # n_ctx: 8192
-    # n_threads: 12
-    # gpu_layers: 0
-    # batch: 128
-
-    $llamaArgs = @(
-        "--model", $modelPath,
-        "--host", "127.0.0.1",
-        "--port", "8081",
-        "--ctx-size", "8192",
-        "--threads", "12",
-        "--n-gpu-layers", "0",
-        "--batch-size", "128"
-    )
-
-    Write-Host "Starting LLM server (llama-server.exe) on port 8081..."
-    Start-Process -FilePath $llamaExe -WorkingDirectory $root -ArgumentList $llamaArgs
-} else {
-    Write-Host "LLM server binary not found at '$llamaExe', skipping LLM server."
-}
-
-# --------------------------------------------------------------------
-# Helper zum Start von Python-Apps in eigenen Fenstern (-NoExit)
-# --------------------------------------------------------------------
-function Start-App {
+function Start-PythonApp {
     param(
-        [string]$Name,
-        [string]$WorkingDirectory,
-        [string]$Arguments
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$PythonExe,
+        [Parameter(Mandatory = $true)][string]$Arguments
     )
 
-    if (-not (Test-Path -LiteralPath $WorkingDirectory)) {
-        Write-Warning "Directory '$WorkingDirectory' for $Name not found - skipping."
+    if (-not (Test-Path $WorkingDirectory)) {
+        Write-Warning ("{0}: directory '{1}' not found, skipping." -f $Name, $WorkingDirectory)
         return
     }
 
-    $psCommand = "Set-Location '$WorkingDirectory'; & '$python' $Arguments"
+    if ($PythonExe -ne "python" -and -not (Test-Path $PythonExe)) {
+        Write-Warning ("{0}: python executable '{1}' not found, skipping." -f $Name, $PythonExe)
+        return
+    }
 
-    Write-Host "Starting $Name in separate PowerShell window..."
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", $psCommand
+    Write-Host ("Starting {0}..." -f $Name)
+    Start-Process -FilePath $PythonExe -WorkingDirectory $WorkingDirectory -ArgumentList $Arguments
 }
 
-# 1) MyCandyLocal launcher (Backend + TTS + UI etc.)
-Start-App -Name "MyCandyLocal Launcher" -WorkingDirectory $root -Arguments "'app_launcher.py'"
-
-# 2) ComfyUI XPU Portable (Intel GPU)
-$comfyDir      = Join-Path $root "ComfyUI"
-$comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
-
-if (Test-Path $comfyLauncher) {
-    Write-Host "Starting ComfyUI XPU (portable)..."
-    # .bat direkt starten, der Launcher kümmert sich um Python & Umgebung
-    Start-Process -FilePath $comfyLauncher -WorkingDirectory $comfyDir
+# -----------------------------------------------------------------------
+# 1) LLM server + FastAPI backend (launcher.py handles both)
+# -----------------------------------------------------------------------
+$launcherPy = Join-Path $root "launcher.py"
+if (Test-Path $launcherPy) {
+    Start-PythonApp -Name "MyCandyLocal launcher" `
+                    -WorkingDirectory $root `
+                    -PythonExe $pythonRoot `
+                    -Arguments "launcher.py"
 } else {
-    Write-Host "ComfyUI launcher not found at '$comfyLauncher', skipping."
+    Write-Warning "launcher.py not found in $root - skipping LLM/backend."
 }
 
-# 3) RVC WebUI (mit eigenem venv)
+# -----------------------------------------------------------------------
+# 2) ComfyUI XPU (Portable-XPU package in .\ComfyUI)
+# -----------------------------------------------------------------------
+$comfyDir = Join-Path $root "ComfyUI"
+if (Test-Path $comfyDir) {
+
+    # Try: python\python.exe launcher.py (Portable-XPU)
+    $comfyPython     = Join-Path $comfyDir "python\python.exe"
+    $comfyLauncherPy = Join-Path $comfyDir "launcher.py"
+
+    $launchedComfy = $false
+
+    if (Test-Path $comfyPython -and (Test-Path $comfyLauncherPy)) {
+        Start-PythonApp -Name "ComfyUI XPU (python)" `
+                        -WorkingDirectory $comfyDir `
+                        -PythonExe $comfyPython `
+                        -Arguments "launcher.py"
+        $launchedComfy = $true
+    } else {
+        # Fallback: look for an EXE launcher
+        $possibleLaunchers = @(
+            "launcher.exe",
+            "ComfyUI-Launcher-xpu.exe",
+            "ComfyUI-Launcher.exe"
+        )
+
+        foreach ($exeName in $possibleLaunchers) {
+            $exePath = Join-Path $comfyDir $exeName
+            if (Test-Path $exePath) {
+                Write-Host ("Starting ComfyUI XPU via {0}..." -f $exeName)
+                Start-Process -FilePath $exePath -WorkingDirectory $comfyDir
+                $launchedComfy = $true
+                break
+            }
+        }
+    }
+
+    if (-not $launchedComfy) {
+        Write-Warning "ComfyUI folder found, but no launcher.exe or python\launcher.py detected."
+    }
+} else {
+    Write-Host "ComfyUI folder not found - skipping."
+}
+
+# -----------------------------------------------------------------------
+# 3) RVC WebUI (has its own venv under rvc_webui\venv)
+# -----------------------------------------------------------------------
 $rvcDir        = Join-Path $root "rvc_webui"
 $rvcScript     = Join-Path $rvcDir "infer-web.py"
 $rvcVenvPython = Join-Path $rvcDir "venv\Scripts\python.exe"
 
 if (Test-Path $rvcScript) {
     if (Test-Path $rvcVenvPython) {
-        $rvcPython = $rvcVenvPython
-        Write-Host "Using RVC venv Python: $rvcPython"
+        Start-PythonApp -Name "RVC WebUI" `
+                        -WorkingDirectory $rvcDir `
+                        -PythonExe $rvcVenvPython `
+                        -Arguments "infer-web.py"
     } else {
-        $rvcPython = $python
-        Write-Warning "RVC venv Python not found, falling back to: $rvcPython"
+        Start-PythonApp -Name "RVC WebUI (root python)" `
+                        -WorkingDirectory $rvcDir `
+                        -PythonExe $pythonRoot `
+                        -Arguments "infer-web.py"
     }
-
-    $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' 'infer-web.py'"
-    Write-Host "Starting RVC WebUI in separate PowerShell window..."
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-Command", $rvcCommand
 } else {
-    Write-Host "RVC WebUI not found, skipping."
+    Write-Host "RVC WebUI not found - skipping."
 }
 
 Write-Host ""
-Write-Host "Done. Launched LLM server and all available Python servers."
+Write-Host "All launch commands issued."
+Write-Host "If the MyCandyLocal UI does not open automatically, open http://127.0.0.1:8000/ in your browser."
