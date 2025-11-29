@@ -903,6 +903,65 @@ def create_app() -> FastAPI:
     async def train_voice_api(char_id: int):
         return await train_voice(char_id)
 
+    @app.get("/health")
+    async def health_check():
+        """Simple health check endpoint"""
+        return {"status": "ok", "service": "MyCandyLocal"}
+
+    @app.get("/status")
+    async def service_status():
+        """Check status of all services"""
+        status = {
+            "backend": "online",
+            "llm": "unknown",
+            "tts": "unknown",
+            "image_gen": "unknown"
+        }
+        
+        # Check LLM service
+        try:
+            llm_mode = config.get("llm", {}).get("mode", "gguf")
+            if llm_mode == "gguf":
+                llm_port = config.get("llm", {}).get("llama_cpp_server", {}).get("port", 8081)
+                llm_host = config.get("backend_host", "127.0.0.1")
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex((llm_host, llm_port))
+                sock.close()
+                status["llm"] = "online" if result == 0 else "offline"
+            else:
+                # Ollama mode
+                status["llm"] = "unknown"
+        except Exception:
+            status["llm"] = "offline"
+        
+        # Check TTS service
+        try:
+            if media_cfg.get("tts_enabled"):
+                tts_port = media_cfg.get("tts_port", 8020)
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex(("127.0.0.1", tts_port))
+                sock.close()
+                status["tts"] = "online" if result == 0 else "offline"
+            else:
+                status["tts"] = "disabled"
+        except Exception:
+            status["tts"] = "offline"
+        
+        # Check image generation
+        try:
+            if media_cfg.get("comfy_enabled") or media_cfg.get("sdnext_enabled"):
+                status["image_gen"] = "configured"
+            else:
+                status["image_gen"] = "disabled"
+        except Exception:
+            status["image_gen"] = "unknown"
+        
+        return status
+
     return app
 
 
