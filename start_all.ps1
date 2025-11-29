@@ -1,6 +1,6 @@
 # start_all.ps1
 # Starts:
-#  - MyCandyLocal (llama.cpp + backend) via launcher.py
+#  - MyCandyLocal (llama.cpp + backend) via app_launcher.py
 #  - ComfyUI XPU (Launcher / python)
 #  - RVC WebUI (own venv)
 # Each in a separate window.
@@ -46,16 +46,16 @@ function Start-PythonApp {
 }
 
 # -----------------------------------------------------------------------
-# 1) LLM server + FastAPI backend (launcher.py handles both)
+# 1) LLM server + FastAPI backend (app_launcher.py handles both)
 # -----------------------------------------------------------------------
-$launcherPy = Join-Path $root "launcher.py"
-if (Test-Path $launcherPy) {
+$appLauncher = Join-Path $root "app_launcher.py"
+if (Test-Path $appLauncher) {
     Start-PythonApp -Name "MyCandyLocal launcher" `
                     -WorkingDirectory $root `
                     -PythonExe $pythonRoot `
-                    -Arguments "launcher.py"
+                    -Arguments "app_launcher.py"
 } else {
-    Write-Warning "launcher.py not found in $root - skipping LLM/backend."
+    Write-Warning "app_launcher.py not found in $root - skipping LLM/backend."
 }
 
 # -----------------------------------------------------------------------
@@ -70,7 +70,8 @@ if (Test-Path $comfyDir) {
 
     $launchedComfy = $false
 
-    if (Test-Path $comfyPython -and (Test-Path $comfyLauncherPy)) {
+    # Wichtig: -and muss zwischen zwei Ausdruecken stehen
+    if ( (Test-Path $comfyPython) -and (Test-Path $comfyLauncherPy) ) {
         Start-PythonApp -Name "ComfyUI XPU (python)" `
                         -WorkingDirectory $comfyDir `
                         -PythonExe $comfyPython `
