@@ -1,1 +1,1 @@
-{"http_proxy": "", "https_proxy": "", "hf_token": "", "pip_index_url": "", "hf_endpoint": "", "disable_auto_launch": false, "disable_smart_memory": true, "lowvram": false, "disable_ipex_optimize": false, "async_offload": false, "extra_args": ""}
+{"http_proxy": "", "https_proxy": "", "hf_token": "", "pip_index_url": "", "hf_endpoint": "", "disable_auto_launch": true, "disable_smart_memory": true, "lowvram": false, "disable_ipex_optimize": false, "async_offload": false, "extra_args": ""}
