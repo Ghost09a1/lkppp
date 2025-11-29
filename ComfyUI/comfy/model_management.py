@@ -1108,3 +1108,91 @@ def cast_to_device(tensor, device, dtype, copy=False):
 
 # Anzahl der Streams für das Offload-System (wird in model_patcher.py genutzt)
 NUM_STREAMS = 1
+# ---------------------------------------------------------------------------
+# MyCandy / ComfyUI compatibility shim (appended at end of file)
+# Fills in newer helper functions if they are missing so that comfy.ops works
+# on CPU / CUDA / Intel XPU.
+# ---------------------------------------------------------------------------
+
+import inspect as _inspect
+import torch as _torch  # local alias, original module uses "torch"
+
+# ---- Stream helpers used by comfy.ops / model_patcher ----------------------
+
+# Default number of streams if the main file didn't define it.
+if "NUM_STREAMS" not in globals():
+    NUM_STREAMS = 1
+
+# Lightweight per-device stream cache.
+if "STREAMS" not in globals():
+    STREAMS = {}
+    _STREAM_COUNTERS = {}
+
+    def get_offload_stream(device):
+        """Return a torch stream for the given device or None.
+
+        We keep things deliberately simple:
+        * on CPU we don't create streams
+        * on CUDA / XPU we create up to NUM_STREAMS streams per device
+        """
+        if device is None:
+            return None
+
+        dev_type = getattr(device, "type", str(device))
+        if dev_type == "cpu":
+            return None
+
+        key = f"{dev_type}:{getattr(device, 'index', 0)}"
+        per_dev_streams = STREAMS.setdefault(key, [])
+        idx = _STREAM_COUNTERS.get(key, 0) % max(NUM_STREAMS, 1)
+        _STREAM_COUNTERS[key] = idx + 1
+
+        # Lazily create streams
+        while len(per_dev_streams) <= idx:
+            if dev_type == "cuda" and hasattr(_torch, "cuda"):
+                per_dev_streams.append(_torch.cuda.Stream(device=device))
+            elif dev_type.startswith("xpu") and hasattr(_torch, "xpu"):
+                # Intel XPU backend
+                per_dev_streams.append(_torch.xpu.Stream(device=device))
+            else:
+                # Unknown / unsupported device type -> no async stream
+                return None
+
+        return per_dev_streams[idx]
+
+    def sync_stream(device, stream):
+        """Synchronise the given offload stream with the current stream.
+
+        For devices that do not support streams we simply do nothing.
+        """
+        if stream is None:
+            return
+
+        dev_type = getattr(device, "type", str(device))
+
+        try:
+            if dev_type == "cuda" and hasattr(_torch, "cuda"):
+                _torch.cuda.current_stream(device).wait_stream(stream)
+            elif dev_type.startswith("xpu") and hasattr(_torch, "xpu"):
+                _torch.xpu.current_stream(device).wait_stream(stream)
+        except Exception:
+            # Best-effort sync; failures should not crash the app.
+            pass
+
+# ---- Make sure cast_to accepts the 'stream=' kwarg ------------------------
+
+if "cast_to" in globals():
+    _old_cast_to = cast_to
+    _sig = _inspect.signature(_old_cast_to)
+    if "stream" not in _sig.parameters:
+        def cast_to(weight, dtype=None, device=None,
+                    non_blocking=False, copy=False, stream=None):
+            # We ignore the stream argument in this compatibility wrapper
+            return _old_cast_to(weight, dtype=dtype, device=device,
+                                non_blocking=non_blocking, copy=copy)
+
+# Helper used in comfy.ops; keep the signature stable.
+if "cast_to_device" not in globals():
+    def cast_to_device(tensor, device, dtype, copy=False):
+        return cast_to(tensor, dtype=dtype, device=device,
+                       non_blocking=False, copy=copy)
