@@ -641,6 +641,8 @@ def create_app() -> FastAPI:
             tts_result = await media.tts(tts_text, character)
             if tts_result.get("ok") and tts_result.get("audio_base64"):
                 audio_b64 = tts_result.get("audio_base64")
+                if audio_b64 and not audio_b64.startswith("data:"):
+                    audio_b64 = f"data:audio/wav;base64,{audio_b64}"
                 logger.info("chat tts inline ok len=%s", len(audio_b64))
             else:
                 logger.warning("chat tts inline failed: %s", tts_result.get("error"))

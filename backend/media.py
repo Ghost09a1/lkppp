@@ -211,7 +211,10 @@ class MediaRouter:
                 data = r.json()
                 prompt_id = data.get("prompt_id") or client_id
             except Exception as exc:
+                logging.getLogger("mycandy.core").error("Error sending prompt to ComfyUI: %s", exc)
                 return {"ok": False, "error": f"Error sending prompt to ComfyUI: {exc}"}
+
+            logging.getLogger("mycandy.core").info("ComfyUI prompt sent, id=%s. Waiting for generation...", prompt_id)
 
             images_b64: list[str] = []
 
