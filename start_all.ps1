@@ -137,7 +137,7 @@ if (Test-Path $rvcDir) {
 
         # RVC WebUI needs to be run from its own directory
         # ADDED --listen-port 7866 to avoid conflict
-        $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --listen-port 7866"
+        $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --port 7866"
         Start-NewPowerShell -Name "RVC WebUI" -Command $rvcCommand
         
     }
