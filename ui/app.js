@@ -513,11 +513,83 @@ imageForm.addEventListener('submit', async (e) => {
     }
 });
 
-// Voice Recording (Stub)
+// Voice Recording
 const btnRecord = document.getElementById('btn-record');
-btnRecord.addEventListener('click', () => {
-    showError('Voice recording not yet implemented');
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+btnRecord.addEventListener('click', async () => {
+    if (!isRecording) {
+        // Start recording
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.addEventListener('dataavailable', event => {
+                audioChunks.push(event.data);
+            });
+
+            mediaRecorder.addEventListener('stop', async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                await sendAudioToSTT(audioBlob);
+                
+                // Stop all tracks
+                stream.getTracks().forEach(track => track.stop());
+            });
+
+            mediaRecorder.start();
+            isRecording = true;
+            btnRecord.classList.add('recording');
+            btnRecord.textContent = '⏹️ Stop';
+            showInfo('Recording... Click Stop to finish.');
+        } catch (error) {
+            showError('Microphone access denied or not available: ' + error.message);
+        }
+    } else {
+        // Stop recording
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            isRecording = false;
+            btnRecord.classList.remove('recording');
+            btnRecord.textContent = '🎤 Voice';
+        }
+    }
 });
+
+async function sendAudioToSTT(audioBlob) {
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'recording.wav');
+    
+    // Optional: get current character language preference
+    const lang = state.currentCharacter ? state.currentCharacter.language : '';
+    if (lang) formData.append('language', lang);
+
+    showLoading(document.querySelector('.chat-input-area'));
+    
+    try {
+        const response = await fetch(`${API_BASE}/stt`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) throw new Error('STT request failed');
+
+        const data = await response.json();
+        if (data.text) {
+            const currentText = userInput.value;
+            userInput.value = currentText ? `${currentText} ${data.text}` : data.text;
+            showSuccess('Transcribed!');
+        } else {
+            showInfo('No speech detected.');
+        }
+    } catch (error) {
+        showError('Voice recognition failed: ' + error.message);
+    } finally {
+        hideLoading(document.querySelector('.chat-input-area'));
+    }
+}
 
 // Settings
 async function loadSettings() {
