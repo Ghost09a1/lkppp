@@ -34,6 +34,7 @@ ComfyUI/temp/
 ComfyUI/TorchHome/
 ComfyUI/__pycache__/
 ComfyUI/.pytest_cache/
+ComfyUI/python_standalone/
 ComfyUI_old/
 
 ########################
