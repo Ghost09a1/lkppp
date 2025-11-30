@@ -106,11 +106,17 @@ export default function App() {
   };
 
   // Chat Logic
-  const handleSend = async () => {
-    if (!input.trim() || !selectedCharId) return;
+  const handleSend = async (textOverride?: string | any) => {
+    // [HOTFIX] Ensure textOverride is a string (ignore event objects from onClick)
+    const actualText = typeof textOverride === 'string' ? textOverride : undefined;
+    const textToUse = actualText || input;
 
-    const text = input.trim();
-    setInput("");
+    if (!textToUse.trim() || !selectedCharId) return;
+
+    const text = textToUse.trim();
+    if (!actualText) {
+      setInput("");
+    }
     setIsSending(true);
 
     // Optimistic User Message
@@ -161,7 +167,9 @@ export default function App() {
       setCurrentAudioId(messageId);
     }
 
-    const url = b64.startsWith('data:') ? b64 : `data:audio/wav;base64,${b64}`;
+    // [HOTFIX] Clean base64 string to prevent static/errors
+    const cleanB64 = b64.trim().replace(/[\r\n]/g, '');
+    const url = cleanB64.startsWith('data:') ? cleanB64 : `data:audio/wav;base64,${cleanB64}`;
     const audio = new Audio(url);
     audioRef.current = audio;
 
@@ -215,44 +223,9 @@ export default function App() {
           const res = await apiClient.transcribeAudio(blob, selectedChar?.language);
           console.log("STT Result:", res.text);
 
-          if (res.text && selectedCharId) {
-            // Auto-send the transcript as a message
-            const userMsg: Message = {
-              id: Date.now(),
-              role: 'user',
-              content: res.text
-            };
-            setMessages(prev => [...prev, userMsg]);
-            setIsSending(true);
-
-            // Send to LLM
-            try {
-              const llmRes = await apiClient.sendMessage(selectedCharId, res.text, autoTTS);
-              const aiMsg: Message = {
-                id: Date.now() + 1,
-                role: 'assistant',
-                content: llmRes.reply || "(No response)",
-                audio_base64: llmRes.audio_base64
-              };
-              setMessages(prev => [...prev, aiMsg]);
-
-              // Auto-play TTS if enabled
-              if (llmRes.audio_base64 && autoTTS) {
-                console.log("Auto-playing TTS for message", aiMsg.id);
-                playAudio(llmRes.audio_base64, aiMsg.id);
-              } else {
-                console.log("Skipping auto-play", { hasAudio: !!llmRes.audio_base64, autoTTS });
-              }
-            } catch (err) {
-              console.error("LLM response failed", err);
-              setMessages(prev => [...prev, {
-                id: Date.now(),
-                role: 'assistant',
-                content: "Error: Could not get response."
-              }]);
-            } finally {
-              setIsSending(false);
-            }
+          if (res.text && res.text.trim() && selectedCharId) {
+            // [HOTFIX] Use handleSend to ensure consistent behavior
+            await handleSend(res.text.trim());
           }
         } catch (err) {
           console.error("STT failed", err);

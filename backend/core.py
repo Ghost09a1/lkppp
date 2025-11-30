@@ -53,7 +53,9 @@ def _clean_tts_text(text: str) -> str:
 
     without_markers = re.sub(r"<\|audio_start\|>|<\|audio_end\|>", "", text, flags=re.IGNORECASE)
     # Remove [GENERATE_IMAGE] from TTS text to prevent reading it
-    without_markers = re.sub(r"\[GENERATE_IMAGE\]", "", without_markers, flags=re.IGNORECASE)
+    without_markers = re.sub(r"\[GENERATE_IMAGE.*?\]", "", without_markers, flags=re.IGNORECASE)
+    # Remove [EMOTE:...] from TTS text
+    without_markers = re.sub(r"\[EMOTE:.*?\]", "", without_markers, flags=re.IGNORECASE)
 
     parts: list[str] = []
     last = 0
@@ -92,7 +94,7 @@ def _clean_display_text(text: str) -> str:
     text = re.sub(r"\[EMOTE:.*?\]", "", text, flags=re.IGNORECASE)
 
     # Remove [GENERATE_IMAGE] tag
-    text = re.sub(r"\[GENERATE_IMAGE\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[GENERATE_IMAGE.*?\]", "", text, flags=re.IGNORECASE)
     
     # Remove action markers *text* but keep the text content
     # (keep actions visible, just clean up the formatting)
@@ -281,7 +283,7 @@ class CharacterPayload(BaseModel):
 
 class ChatPayload(BaseModel):
     message: str
-    enable_tts: bool = True  # Default to True for backward compatibility
+    enable_tts: bool = False  # [HOTFIX] Default to False for safety
 
 
 class TtsPayload(BaseModel):
@@ -672,7 +674,8 @@ def create_app() -> FastAPI:
 
         audio_b64: str | None = None
         # Only generate TTS if enabled (saves resources and prevents token leakage)
-        enable_tts = payload.enable_tts if payload else True
+        # [HOTFIX] Strict check: default to False if payload missing, or trust payload
+        enable_tts = payload.enable_tts if payload else False
         if enable_tts:
             try:
                 tts_result = await media.tts(tts_text, character)
