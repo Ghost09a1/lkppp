@@ -1,5 +1,5 @@
 import React from 'react';
-import { Send, Mic, Image as ImageIcon, Book } from 'lucide-react';
+import { Send, Mic, Image as ImageIcon, Book, Volume2, VolumeX } from 'lucide-react';
 
 interface ComposerProps {
     input: string;
@@ -11,6 +11,8 @@ interface ComposerProps {
     isSending: boolean;
     onImageClick: () => void;
     onTogglePrompts: () => void;
+    autoTTS?: boolean;
+    onToggleTTS?: () => void;
     inputRef?: React.RefObject<HTMLTextAreaElement>;
 }
 
@@ -24,6 +26,8 @@ export default function Composer({
     isSending,
     onImageClick,
     onTogglePrompts,
+    autoTTS,
+    onToggleTTS,
     inputRef
 }: ComposerProps) {
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -43,6 +47,17 @@ export default function Composer({
                 >
                     <Book size={20} />
                 </button>
+
+                {onToggleTTS && (
+                    <button
+                        onClick={onToggleTTS}
+                        className={`p-3 transition-colors ${autoTTS ? 'text-pink-500' : 'text-gray-400 hover:text-gray-300'}`}
+                        title={autoTTS ? "Disable Auto-TTS" : "Enable Auto-TTS"}
+                    >
+                        {autoTTS ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                    </button>
+                )}
+
                 <div className="flex-1 bg-gray-900/50 rounded-xl border border-gray-700 focus-within:border-pink-500/50 transition-colors flex items-center">
                     <textarea
                         ref={inputRef}

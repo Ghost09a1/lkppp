@@ -37,6 +37,13 @@ export default function App() {
   const [showPrompts, setShowPrompts] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
 
+  // TTS Settings
+  const [autoTTS, setAutoTTS] = useState(() => {
+    const saved = localStorage.getItem('mycandy_auto_tts');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+  const [currentAudioId, setCurrentAudioId] = useState<number | null>(null);
+
   // Refs
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -127,9 +134,9 @@ export default function App() {
       };
       setMessages(prev => [...prev, aiMsg]);
 
-      // TTS
-      if (res.audio_base64) {
-        playAudio(res.audio_base64);
+      // TTS (auto-play if enabled)
+      if (res.audio_base64 && autoTTS) {
+        playAudio(res.audio_base64, aiMsg.id);
       }
 
     } catch (err) {
@@ -144,14 +151,49 @@ export default function App() {
     }
   };
 
-  const playAudio = (b64: string) => {
-    if (audioRef.current) {
-      audioRef.current.pause();
+  const playAudio = (b64: string, messageId?: number) => {
+    console.log("Attempting to play audio", { messageId, length: b64?.length });
+    // Stop any currently playing audio
+    stopAudio();
+
+    // Set current playing ID
+    if (messageId) {
+      setCurrentAudioId(messageId);
     }
-    const url = `data:audio/wav;base64,${b64}`;
+
+    const url = b64.startsWith('data:') ? b64 : `data:audio/wav;base64,${b64}`;
     const audio = new Audio(url);
     audioRef.current = audio;
-    audio.play().catch(e => console.error("Audio play failed", e));
+
+    audio.onended = () => {
+      setCurrentAudioId(null);
+      audioRef.current = null;
+    };
+
+    audio.onerror = (e) => {
+      console.error("Audio play failed", e);
+      setCurrentAudioId(null);
+      audioRef.current = null;
+    };
+
+    audio.play().catch(e => {
+      console.error("Audio play failed", e);
+      setCurrentAudioId(null);
+    });
+  };
+
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    setCurrentAudioId(null);
+  };
+
+  const toggleAutoTTS = () => {
+    const newValue = !autoTTS;
+    setAutoTTS(newValue);
+    localStorage.setItem('mycandy_auto_tts', JSON.stringify(newValue));
   };
 
   // STT Logic
@@ -172,13 +214,45 @@ export default function App() {
         try {
           const res = await apiClient.transcribeAudio(blob, selectedChar?.language);
           console.log("STT Result:", res.text);
-          if (res.text) {
-            setInput(prev => {
-              const trimmed = prev.trim();
-              return trimmed ? `${trimmed} ${res.text}` : res.text;
-            });
-            // Focus input
-            inputRef.current?.focus();
+
+          if (res.text && selectedCharId) {
+            // Auto-send the transcript as a message
+            const userMsg: Message = {
+              id: Date.now(),
+              role: 'user',
+              content: res.text
+            };
+            setMessages(prev => [...prev, userMsg]);
+            setIsSending(true);
+
+            // Send to LLM
+            try {
+              const llmRes = await apiClient.sendMessage(selectedCharId, res.text);
+              const aiMsg: Message = {
+                id: Date.now() + 1,
+                role: 'assistant',
+                content: llmRes.reply || "(No response)",
+                audio_base64: llmRes.audio_base64
+              };
+              setMessages(prev => [...prev, aiMsg]);
+
+              // Auto-play TTS if enabled
+              if (llmRes.audio_base64 && autoTTS) {
+                console.log("Auto-playing TTS for message", aiMsg.id);
+                playAudio(llmRes.audio_base64, aiMsg.id);
+              } else {
+                console.log("Skipping auto-play", { hasAudio: !!llmRes.audio_base64, autoTTS });
+              }
+            } catch (err) {
+              console.error("LLM response failed", err);
+              setMessages(prev => [...prev, {
+                id: Date.now(),
+                role: 'assistant',
+                content: "Error: Could not get response."
+              }]);
+            } finally {
+              setIsSending(false);
+            }
           }
         } catch (err) {
           console.error("STT failed", err);
@@ -278,6 +352,9 @@ export default function App() {
         <ChatPanel
           messages={messages}
           loading={isSending}
+          currentAudioId={currentAudioId}
+          onStopAudio={stopAudio}
+          onPlayAudio={playAudio}
         />
 
         <Composer
@@ -290,6 +367,8 @@ export default function App() {
           isSending={isSending}
           onImageClick={() => { setMediaType('image'); closeAllModals(); setShowMediaModal(true); }}
           onTogglePrompts={() => { closeAllModals(); setShowPrompts(prev => !prev); }}
+          autoTTS={autoTTS}
+          onToggleTTS={toggleAutoTTS}
           inputRef={inputRef}
         />
       </div>

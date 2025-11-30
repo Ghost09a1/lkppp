@@ -1,23 +1,21 @@
 import { useEffect, useRef } from 'react';
 import { Message } from '../types';
-import { Volume2 } from 'lucide-react';
+import { Volume2, StopCircle } from 'lucide-react';
 
 interface ChatPanelProps {
     messages: Message[];
     loading: boolean;
+    currentAudioId?: number | null;
+    onStopAudio?: () => void;
+    onPlayAudio?: (b64: string, id: number) => void;
 }
 
-export default function ChatPanel({ messages, loading }: ChatPanelProps) {
+export default function ChatPanel({ messages, loading, currentAudioId, onStopAudio, onPlayAudio }: ChatPanelProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
-
-    const playAudio = (audio_base64: string) => {
-        const audio = new Audio(audio_base64);
-        audio.play().catch(err => console.error('Audio play failed:', err));
-    };
 
     return (
         <div className="flex-1 overflow-y-auto p-6">
@@ -29,8 +27,8 @@ export default function ChatPanel({ messages, loading }: ChatPanelProps) {
                     >
                         <div
                             className={`max-w-[70%] rounded-2xl px-4 py-3 ${msg.role === 'user'
-                                    ? 'bg-candy-pink text-white'
-                                    : 'bg-gray-800 text-gray-100'
+                                ? 'bg-candy-pink text-white'
+                                : 'bg-gray-800 text-gray-100'
                                 }`}
                         >
                             <p className="whitespace-pre-wrap">{msg.content}</p>
@@ -44,13 +42,23 @@ export default function ChatPanel({ messages, loading }: ChatPanelProps) {
                             )}
 
                             {msg.audio_base64 && msg.role === 'assistant' && (
-                                <button
-                                    onClick={() => playAudio(msg.audio_base64!)}
-                                    className="mt-2 flex items-center gap-1 text-sm opacity-75 hover:opacity-100"
-                                >
-                                    <Volume2 size={14} />
-                                    <span>Play</span>
-                                </button>
+                                currentAudioId === msg.id && onStopAudio ? (
+                                    <button
+                                        onClick={onStopAudio}
+                                        className="mt-2 flex items-center gap-1 text-sm text-candy-pink opacity-75 hover:opacity-100 animate-pulse"
+                                    >
+                                        <StopCircle size={14} />
+                                        <span>Stop</span>
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => onPlayAudio?.(msg.audio_base64!, msg.id)}
+                                        className="mt-2 flex items-center gap-1 text-sm opacity-75 hover:opacity-100"
+                                    >
+                                        <Volume2 size={14} />
+                                        <span>Play</span>
+                                    </button>
+                                )
                             )}
                         </div>
                     </div>
