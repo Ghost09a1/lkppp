@@ -11,8 +11,9 @@ export const api = axios.create({
 
 export const apiClient = {
     // Chat
-    async sendMessage(charId: number, message: string) {
-        const res = await api.post(`/chat/${charId}`, { message });
+    async sendMessage(charId: number, message: string, enableTTS: boolean = true) {
+        console.log(`[API] Sending message to char ${charId} with enable_tts=${enableTTS}`);
+        const res = await api.post(`/chat/${charId}`, { message, enable_tts: enableTTS });
         return res.data;
     },
 

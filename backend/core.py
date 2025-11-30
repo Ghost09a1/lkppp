@@ -52,6 +52,8 @@ def _clean_tts_text(text: str) -> str:
     import re
 
     without_markers = re.sub(r"<\|audio_start\|>|<\|audio_end\|>", "", text, flags=re.IGNORECASE)
+    # Remove [GENERATE_IMAGE] from TTS text to prevent reading it
+    without_markers = re.sub(r"\[GENERATE_IMAGE\]", "", without_markers, flags=re.IGNORECASE)
 
     parts: list[str] = []
     last = 0
@@ -70,6 +72,37 @@ def _clean_tts_text(text: str) -> str:
     cleaned = "".join(parts)
     cleaned = re.sub(r"\s{2,}", " ", cleaned)
     return cleaned.strip().strip('"').strip("'")
+
+
+def _clean_display_text(text: str) -> str:
+    """
+    Remove ALL custom tokens and markers from text for display in UI.
+    This ensures users never see TTS/audio control tokens.
+    """
+    import re
+    
+    # Remove audio markers (both pipe and bracket formats)
+    text = re.sub(r"<\|audio_start\|>|<audio_start>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<\|audio_end\|>|<audio_end>", "", text, flags=re.IGNORECASE)
+    
+    # Remove ALL custom tokens
+    text = re.sub(r"<custom_token_\w+>", "", text, flags=re.IGNORECASE)
+    
+    # Remove emote markers like [EMOTE:...]
+    text = re.sub(r"\[EMOTE:.*?\]", "", text, flags=re.IGNORECASE)
+
+    # Remove [GENERATE_IMAGE] tag
+    text = re.sub(r"\[GENERATE_IMAGE\]", "", text, flags=re.IGNORECASE)
+    
+    # Remove action markers *text* but keep the text content
+    # (keep actions visible, just clean up the formatting)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    
+    # Clean up multiple spaces
+    text = re.sub(r"\s{2,}", " ", text)
+    
+    # Remove leading/trailing quotes and whitespace
+    return text.strip().strip('"').strip("'")
 
 def _is_non_erotic_intent(text: str) -> bool:
     """
@@ -248,6 +281,7 @@ class CharacterPayload(BaseModel):
 
 class ChatPayload(BaseModel):
     message: str
+    enable_tts: bool = True  # Default to True for backward compatibility
 
 
 class TtsPayload(BaseModel):
@@ -637,21 +671,26 @@ def create_app() -> FastAPI:
         logger.info("chat tts_text_len=%s", len(tts_text))
 
         audio_b64: str | None = None
-        try:
-            tts_result = await media.tts(tts_text, character)
-            if tts_result.get("ok") and tts_result.get("audio_base64"):
-                audio_b64 = tts_result.get("audio_base64")
-                if audio_b64 and not audio_b64.startswith("data:"):
-                    audio_b64 = f"data:audio/wav;base64,{audio_b64}"
-                logger.info("chat tts inline ok len=%s", len(audio_b64))
-            else:
-                logger.warning("chat tts inline failed: %s", tts_result.get("error"))
-        except Exception as exc:
-            logger.warning("chat tts inline exception: %s", exc)
+        # Only generate TTS if enabled (saves resources and prevents token leakage)
+        enable_tts = payload.enable_tts if payload else True
+        if enable_tts:
+            try:
+                tts_result = await media.tts(tts_text, character)
+                if tts_result.get("ok") and tts_result.get("audio_base64"):
+                    audio_b64 = tts_result.get("audio_base64")
+                    if audio_b64 and not audio_b64.startswith("data:"):
+                        audio_b64 = f"data:audio/wav;base64,{audio_b64}"
+                    logger.info("chat tts inline ok len=%s", len(audio_b64))
+                else:
+                    logger.warning("chat tts inline failed: %s", tts_result.get("error"))
+            except Exception as exc:
+                logger.warning("chat tts inline exception: %s", exc)
+        else:
+            logger.info("chat tts skipped (enable_tts=False)")
 
         return {
-            "reply": reply,
-            "reply_tts": tts_text,
+            "reply": _clean_display_text(reply),  # Clean for display (no tokens)
+            "reply_tts": tts_text,  # Clean for TTS (keeps voice tokens)
             "audio_base64": audio_b64,
             "user_text": user_text,
             "transcription": transcript or "",

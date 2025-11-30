@@ -57,7 +57,7 @@ rvc_webui/outputs/
 .idx/
 logs/
 outputs/
-backend/
+# backend/  # Temporarily commented for bug fixes
 
 ########################
 # Deine spezielle große WAV

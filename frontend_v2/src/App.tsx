@@ -122,7 +122,7 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const res = await apiClient.sendMessage(selectedCharId, text);
+      const res = await apiClient.sendMessage(selectedCharId, text, autoTTS);
 
       // AI Message
       const aiMsg: Message = {
@@ -227,7 +227,7 @@ export default function App() {
 
             // Send to LLM
             try {
-              const llmRes = await apiClient.sendMessage(selectedCharId, res.text);
+              const llmRes = await apiClient.sendMessage(selectedCharId, res.text, autoTTS);
               const aiMsg: Message = {
                 id: Date.now() + 1,
                 role: 'assistant',
