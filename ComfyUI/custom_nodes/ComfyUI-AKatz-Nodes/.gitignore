@@ -1,0 +1,6 @@
+/__pycache__/
+/models/*.bin
+/models/*.safetensors
+.directory
+modules/__pycache__/
+src/__pycache__/
