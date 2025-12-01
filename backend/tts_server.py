@@ -175,6 +175,8 @@ def _clean_for_plain_tts(text: str) -> str:
     cleaned = MARKERS_REGEX.sub("", text)
     cleaned = CUSTOM_TOKEN_REGEX.sub("", cleaned)
     cleaned = EMOTE_REGEX.sub("", cleaned)
+    # [HOTFIX] Remove [GENERATE_AUDIO] tag
+    cleaned = re.sub(r"\[GENERATE_AUDIO.*?\]", "", cleaned, flags=re.IGNORECASE)
     cleaned = cleaned.strip()
     return cleaned or text
 
@@ -263,39 +265,98 @@ async def tts(req: TTSRequest):
     voice_ref = (req.voice_ref_path or "").strip()
     voice_model_path = (req.voice_model_path or "").strip()
 
-    # --- Preferred path: SNAC decode when tokens exist ---
-    if token_ids and SNAC_DEPENDENCIES_OK:
-        try:
-            model = _ensure_snac_model()
-            wav_np = decode_audio_from_text(text_with_tokens=text, snac_model=model, device=snac_device)
-            wav_bytes = _wav_bytes_from_numpy(wav_np)
-            logger.info(f"[TTS-Server] SNAC wav_bytes created, len={len(wav_bytes)}")
-            wav_bytes = _apply_pitch_speed(wav_bytes, pitch, speed)
-            logger.info(f"[TTS-Server] After pitch/speed, len={len(wav_bytes)}")
-            wav_bytes = _maybe_convert_voice(wav_bytes, voice_ref, voice_model_path)
-            logger.info(f"[TTS-Server] After VC, len={len(wav_bytes)}")
-            b64 = base64.b64encode(wav_bytes).decode("ascii")
-            logger.info(f"[TTS-Server] SNAC final b64 len={len(b64)}")
-            return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
-        except Exception as exc:
-            snac_error = f"SNAC decode failed: {exc}"
-    elif token_ids and not SNAC_DEPENDENCIES_OK:
-        snac_error = "SNAC dependencies missing; install snac torch soundfile and restart."
-    else:
-        snac_error = None
+    pitch = req.pitch_shift or 0.0
+    speed = req.speed or 1.0
+    voice_ref = (req.voice_ref_path or "").strip()
+    voice_model_path = (req.voice_model_path or "").strip()
 
-    # --- Fallback 1: pyttsx3 text TTS ---
-    if not token_ids and pyttsx3 is not None:
-        try:
-            clean_text = _clean_for_plain_tts(text)
-            wav_bytes = _synth_pyttsx3(clean_text)
-            wav_bytes = _apply_pitch_speed(wav_bytes, pitch, speed)
-            wav_bytes = _maybe_convert_voice(wav_bytes, voice_ref, voice_model_path)
-            b64 = base64.b64encode(wav_bytes).decode("ascii")
-            logger.info("tts pyttsx3 ok len=%s", len(b64))
-            return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
-        except Exception:
-            pass
+    parts_to_concat: list[Path] = []
+    
+    # Create a temp dir for processing this request
+    with tempfile.TemporaryDirectory() as tmpdir:
+        work_dir = Path(tmpdir)
+
+        # --- 1. SNAC Audio (Sound Effects) ---
+        if SNAC_MODEL and SNAC_DEPENDENCIES_OK and token_ids:
+            try:
+                # [HOTFIX] Ignore short SNAC sequences
+                if len(token_ids) % 7 == 0 and len(token_ids) >= 70:
+                    model = _ensure_snac_model()
+                    wav_np = decode_audio_from_ids(token_ids, model, device=snac_device)
+                    wav_bytes = _wav_bytes_from_numpy(wav_np)
+                    logger.info(f"[TTS-Server] SNAC wav_bytes created, len={len(wav_bytes)}")
+                    
+                    snac_path = work_dir / "part_1_snac.wav"
+                    snac_path.write_bytes(wav_bytes)
+                    parts_to_concat.append(snac_path)
+                elif len(token_ids) > 0:
+                     logger.warning(f"[TTS-Server] SNAC tokens ignored (count={len(token_ids)}).")
+            except Exception as e:
+                logger.error(f"[TTS-Server] SNAC error: {e}")
+
+        # --- 2. Speech Audio (Text) ---
+        clean_text = _clean_for_plain_tts(text)
+        if clean_text:
+            speech_bytes = None
+            # Try pyttsx3
+            if pyttsx3 is not None:
+                try:
+                    speech_bytes = _synth_pyttsx3(clean_text)
+                    logger.info(f"[TTS-Server] Pyttsx3 generated {len(speech_bytes)} bytes")
+                except Exception as e:
+                    logger.error(f"Pyttsx3 failed: {e}")
+            
+            # Try llama-tts if pyttsx3 failed or not available
+            if not speech_bytes and TTS_AVAILABLE:
+                 # ... (existing llama-tts logic could go here, but keeping it simple for now)
+                 pass
+
+            if speech_bytes:
+                # Apply effects to speech
+                speech_bytes = _apply_pitch_speed(speech_bytes, pitch, speed)
+                speech_bytes = _maybe_convert_voice(speech_bytes, voice_ref, voice_model_path)
+                
+                speech_path = work_dir / "part_2_speech.wav"
+                speech_path.write_bytes(speech_bytes)
+                parts_to_concat.append(speech_path)
+
+        # --- 3. Concatenate ---
+        if not parts_to_concat:
+            return TTSResponse(ok=False, error="No audio generated (no valid tokens and no text)")
+
+        final_wav_path = work_dir / "final.wav"
+        
+        if len(parts_to_concat) == 1:
+            # Just one part, read it back
+            final_data = parts_to_concat[0].read_bytes()
+        else:
+            # Concatenate using ffmpeg (resampling to 24kHz for consistency)
+            # ffmpeg -i part1.wav -i part2.wav -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[out]" -map "[out]" -ar 24000 final.wav
+            
+            inputs = []
+            filter_parts = []
+            for i, p in enumerate(parts_to_concat):
+                inputs.extend(["-i", str(p)])
+                filter_parts.append(f"[{i}:a]")
+            
+            filter_complex = "".join(filter_parts) + f"concat=n={len(parts_to_concat)}:v=0:a=1[out]"
+            
+            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[out]", "-ar", "24000", str(final_wav_path)]
+            
+            try:
+                subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                if final_wav_path.exists():
+                    final_data = final_wav_path.read_bytes()
+                else:
+                    logger.error("FFmpeg concatenation failed to produce output")
+                    # Fallback: return just the speech part if available
+                    final_data = parts_to_concat[-1].read_bytes()
+            except Exception as e:
+                logger.error(f"FFmpeg concat error: {e}")
+                final_data = parts_to_concat[-1].read_bytes()
+
+        b64 = base64.b64encode(final_data).decode("ascii")
+        return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
 
     # --- Fallback 2: llama-tts binary ---
     if not TTS_AVAILABLE:

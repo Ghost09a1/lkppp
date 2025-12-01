@@ -97,19 +97,6 @@ class LLMClient:
             "Always follow the latest user instruction even if it is mundane (e.g., a recipe or a factual answer). Do not refuse or derail into erotic content when the user clearly asks for something else."
         )
         persona.append(
-            "Example ending: ...her breath trembles with pleasure.<|audio_start|>"
-            "<custom_token_100><custom_token_101><custom_token_102><custom_token_103><custom_token_104><custom_token_105><custom_token_106>"
-            "<custom_token_120><custom_token_121><custom_token_122><custom_token_123><custom_token_124><custom_token_125><custom_token_126>"
-            "<|audio_end|>"
-        )
-        persona.append("Do NOT repeat earlier conversation or long-term memory verbatim. Respond only to the latest user message.")
-        persona.append("Speak like a person in plain sentences. No stage directions, no asterisks, no narration of actions. Just say the spoken line.")
-        persona.append("Keep replies to one short paragraph unless explicitly asked for more. Avoid monologues and repetition.")
-        return "\n".join(persona)
-
-    async def generate_chat(
-        self,
-        character: Dict[str, Any],
         history: List[Dict[str, str]],
         stream: bool = False,
     ) -> Any:

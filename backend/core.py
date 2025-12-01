@@ -54,20 +54,31 @@ def _clean_tts_text(text: str) -> str:
     without_markers = re.sub(r"<\|audio_start\|>|<\|audio_end\|>", "", text, flags=re.IGNORECASE)
     # Remove [GENERATE_IMAGE] from TTS text to prevent reading it
     without_markers = re.sub(r"\[GENERATE_IMAGE.*?\]", "", without_markers, flags=re.IGNORECASE)
+    # [HOTFIX] Remove [GENERATE_AUDIO] from TTS text
+    without_markers = re.sub(r"\[GENERATE_AUDIO.*?\]", "", without_markers, flags=re.IGNORECASE)
     # Remove [EMOTE:...] from TTS text
     without_markers = re.sub(r"\[EMOTE:.*?\]", "", without_markers, flags=re.IGNORECASE)
 
     parts: list[str] = []
     last = 0
-    # Preserve custom tokens from emotes; drop non-token emote text
+    
+    # Regex to find *content*
     for match in re.finditer(r"\*(.*?)\*", without_markers):
-        # text before emote
+        # text before emote (keep it)
         parts.append(without_markers[last : match.start()])
-        emote_body = match.group(1)
+        
+        emote_body = match.group(1).strip()
         tokens = re.findall(r"<custom_token_\d+>", emote_body, flags=re.IGNORECASE)
+        
         if tokens:
+            # If it has SNAC tokens, keep ONLY the tokens (sound effect)
             parts.append(" ".join(tokens))
+        else:
+            # No tokens -> Drop the emote entirely (silence)
+            pass
+                
         last = match.end()
+        
     # tail after last emote
     parts.append(without_markers[last:])
 
@@ -95,10 +106,13 @@ def _clean_display_text(text: str) -> str:
 
     # Remove [GENERATE_IMAGE] tag
     text = re.sub(r"\[GENERATE_IMAGE.*?\]", "", text, flags=re.IGNORECASE)
+
+    # [HOTFIX] Remove [GENERATE_AUDIO] tag
+    text = re.sub(r"\[GENERATE_AUDIO.*?\]", "", text, flags=re.IGNORECASE)
     
-    # Remove action markers *text* but keep the text content
-    # (keep actions visible, just clean up the formatting)
-    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    # [HOTFIX] Keep action markers *text* visible in UI
+    # Do NOT escape asterisks, let Markdown handle it (italics)
+    # text = text.replace("*", "\\*") 
     
     # Clean up multiple spaces
     text = re.sub(r"\s{2,}", " ", text)
