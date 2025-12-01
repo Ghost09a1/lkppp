@@ -283,7 +283,7 @@ class CharacterPayload(BaseModel):
 
 class ChatPayload(BaseModel):
     message: str
-    enable_tts: bool = False  # [HOTFIX] Default to False for safety
+    enable_tts: bool = True  # Default to True for backward compatibility
 
 
 class TtsPayload(BaseModel):
@@ -542,8 +542,11 @@ def create_app() -> FastAPI:
 
         lang_pref = (language or "").strip() or media.config.get("media", {}).get("whisper_language", "")
         transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
-        if not transcript:
-            raise HTTPException(status_code=500, detail="Transcription failed or empty.")
+        # [HOTFIX] Only filter truly empty transcripts - let frontend handle dots/short strings
+        logger.info(f"[STT] Whisper returned: {repr(transcript)}")
+        if not transcript or not transcript.strip():
+            logger.warning(f"[STT] Empty transcript, returning empty string")
+            return {"text": "", "language": lang_pref or ""}
         return {"text": transcript, "language": lang_pref or ""}
     @app.post("/api/stt")
     async def stt_api(
@@ -578,7 +581,12 @@ def create_app() -> FastAPI:
         user_text = ((payload.message if payload else "") or message or "").strip()
         raw_user_text = user_text
         transcript: str | None = None
-
+        
+        # [HOTFIX] Also read enable_tts from raw JSON body as fallback
+        enable_tts_from_request = None
+        if payload is not None:
+            enable_tts_from_request = payload.enable_tts
+        
         # Fallback: if still empty, try raw JSON body
         if not user_text:
             try:
@@ -589,6 +597,9 @@ def create_app() -> FastAPI:
                     data = _json.loads(raw)
                     if isinstance(data, dict):
                         user_text = str(data.get("message", "") or data.get("text", "") or "").strip()
+                        # Also try to read enable_tts from here if not already set
+                        if enable_tts_from_request is None and "enable_tts" in data:
+                            enable_tts_from_request = bool(data.get("enable_tts", True))
             except Exception:
                 pass
 
@@ -674,22 +685,30 @@ def create_app() -> FastAPI:
 
         audio_b64: str | None = None
         # Only generate TTS if enabled (saves resources and prevents token leakage)
-        # [HOTFIX] Strict check: default to False if payload missing, or trust payload
-        enable_tts = payload.enable_tts if payload else False
+        # [HOTFIX] Use enable_tts_from_request which was read earlier
+        enable_tts = enable_tts_from_request if enable_tts_from_request is not None else True
+        logger.info(f"[CHAT] enable_tts={enable_tts} (explicit={enable_tts_from_request is not None}), tts_text_len={len(tts_text)}")
+        
         if enable_tts:
             try:
+                logger.info(f"[CHAT] Calling TTS with text: {tts_text[:100]}...")
                 tts_result = await media.tts(tts_text, character)
+                logger.info(f"[CHAT] TTS result: ok={tts_result.get('ok')}, has_audio={bool(tts_result.get('audio_base64'))}, audio_len={len(tts_result.get('audio_base64') or '')}")
+                
                 if tts_result.get("ok") and tts_result.get("audio_base64"):
                     audio_b64 = tts_result.get("audio_base64")
                     if audio_b64 and not audio_b64.startswith("data:"):
                         audio_b64 = f"data:audio/wav;base64,{audio_b64}"
-                    logger.info("chat tts inline ok len=%s", len(audio_b64))
+                    logger.info(f"[CHAT] TTS success, final audio_b64 len={len(audio_b64)}")
                 else:
-                    logger.warning("chat tts inline failed: %s", tts_result.get("error"))
+                    logger.warning(f"[CHAT] TTS failed: {tts_result.get('error')}")
+                    audio_b64 = None
             except Exception as exc:
-                logger.warning("chat tts inline exception: %s", exc)
+                logger.warning(f"[CHAT] TTS exception: {exc}")
+                audio_b64 = None
         else:
-            logger.info("chat tts skipped (enable_tts=False)")
+            logger.info("[CHAT] TTS skipped (enable_tts=False)")
+            audio_b64 = None
 
         return {
             "reply": _clean_display_text(reply),  # Clean for display (no tokens)

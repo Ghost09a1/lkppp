@@ -222,14 +222,53 @@ export default function App() {
         try {
           const res = await apiClient.transcribeAudio(blob, selectedChar?.language);
           console.log("STT Result:", res.text);
+          console.log("[STT] Raw response:", res);
 
-          if (res.text && res.text.trim() && selectedCharId) {
-            // [HOTFIX] Use handleSend to ensure consistent behavior
-            await handleSend(res.text.trim());
+          const transcript = (res.text || "").trim();
+          console.log("[STT] Transcript (JSON):", JSON.stringify(transcript), "length:", transcript.length);
+
+          // [HOTFIX] Filter BEFORE creating message - only block empty or single dot
+          if (!transcript || transcript === "." || !selectedCharId) {
+            console.log("[STT] Ignored transcript:", JSON.stringify(transcript));
+            return;
+          }
+
+          // Now create user message with valid transcript
+          const userMsg: Message = {
+            id: Date.now(),
+            role: 'user',
+            content: transcript
+          };
+          console.log("[STT] Creating message:", userMsg);
+          setMessages(prev => [...prev, userMsg]);
+          setIsSending(true);
+
+          try {
+            const llmRes = await apiClient.sendMessage(selectedCharId, transcript, autoTTS);
+            const aiMsg: Message = {
+              id: Date.now() + 1,
+              role: 'assistant',
+              content: llmRes.reply || "(No response)",
+              audio_base64: llmRes.audio_base64
+            };
+            setMessages(prev => [...prev, aiMsg]);
+
+            if (llmRes.audio_base64 && autoTTS) {
+              playAudio(llmRes.audio_base64, aiMsg.id);
+            }
+          } catch (err) {
+            console.error("LLM response failed", err);
+            setMessages(prev => [...prev, {
+              id: Date.now(),
+              role: 'assistant',
+              content: "Error: Could not get response."
+            }]);
+          } finally {
+            setIsSending(false);
           }
         } catch (err) {
           console.error("STT failed", err);
-          alert("Transcription failed");
+          // [HOTFIX] No alert for STT failures (silence/empty is normal)
         }
       };
 

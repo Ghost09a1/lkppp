@@ -94,7 +94,7 @@ export default function Composer({
                     </button>
 
                     <button
-                        onClick={onSend}
+                        onClick={() => onSend()}
                         disabled={!input.trim() || isSending}
                         className="p-3 rounded-xl bg-pink-600 hover:bg-pink-500 disabled:bg-gray-800 disabled:text-gray-600 text-white transition-colors shadow-lg shadow-pink-900/20"
                         title="Send"

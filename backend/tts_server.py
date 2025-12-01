@@ -254,9 +254,9 @@ async def tts(req: TTSRequest):
     text = (req.text or "").strip() if req.text else ""
     if not text:
         return TTSResponse(ok=False, error="Empty text")
-    logger.info("tts recv len=%s has_tokens=%s", len(text), bool(extract_audio_token_ids and extract_audio_token_ids(text)))
-
+    logger.info(f"[TTS-Server] Input text len={len(text)}, first_100={text[:100]}")
     token_ids = extract_audio_token_ids(text) if extract_audio_token_ids else []
+    logger.info(f"[TTS-Server] Extracted token_ids count={len(token_ids)}")
 
     pitch = req.pitch_shift or 0.0
     speed = req.speed or 1.0
@@ -269,10 +269,13 @@ async def tts(req: TTSRequest):
             model = _ensure_snac_model()
             wav_np = decode_audio_from_text(text_with_tokens=text, snac_model=model, device=snac_device)
             wav_bytes = _wav_bytes_from_numpy(wav_np)
+            logger.info(f"[TTS-Server] SNAC wav_bytes created, len={len(wav_bytes)}")
             wav_bytes = _apply_pitch_speed(wav_bytes, pitch, speed)
+            logger.info(f"[TTS-Server] After pitch/speed, len={len(wav_bytes)}")
             wav_bytes = _maybe_convert_voice(wav_bytes, voice_ref, voice_model_path)
+            logger.info(f"[TTS-Server] After VC, len={len(wav_bytes)}")
             b64 = base64.b64encode(wav_bytes).decode("ascii")
-            logger.info("tts snac ok len=%s", len(b64))
+            logger.info(f"[TTS-Server] SNAC final b64 len={len(b64)}")
             return TTSResponse(ok=True, audio_base64=b64, sample_rate=24000)
         except Exception as exc:
             snac_error = f"SNAC decode failed: {exc}"

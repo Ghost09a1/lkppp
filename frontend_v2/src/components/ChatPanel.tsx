@@ -20,49 +20,52 @@ export default function ChatPanel({ messages, loading, currentAudioId, onStopAud
     return (
         <div className="flex-1 overflow-y-auto p-6">
             <div className="space-y-4">
-                {messages.map((msg) => (
-                    <div
-                        key={msg.id}
-                        className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
+                {messages.map((msg) => {
+                    console.log("[ChatPanel] Rendering msg:", msg);
+                    return (
                         <div
-                            className={`max-w-[70%] rounded-2xl px-4 py-3 ${msg.role === 'user'
-                                ? 'bg-candy-pink text-white'
-                                : 'bg-gray-800 text-gray-100'
-                                }`}
+                            key={msg.id}
+                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                         >
-                            <p className="whitespace-pre-wrap">{msg.content}</p>
+                            <div
+                                className={`max-w-[70%] rounded-2xl px-4 py-3 ${msg.role === 'user'
+                                    ? 'bg-candy-pink text-white'
+                                    : 'bg-gray-800 text-gray-100'
+                                    }`}
+                            >
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
 
-                            {msg.image_base64 && (
-                                <img
-                                    src={msg.image_base64}
-                                    alt="Generated"
-                                    className="mt-2 rounded-lg"
-                                />
-                            )}
+                                {msg.image_base64 && (
+                                    <img
+                                        src={msg.image_base64}
+                                        alt="Generated"
+                                        className="mt-2 rounded-lg"
+                                    />
+                                )}
 
-                            {msg.audio_base64 && msg.role === 'assistant' && (
-                                currentAudioId === msg.id && onStopAudio ? (
-                                    <button
-                                        onClick={onStopAudio}
-                                        className="mt-2 flex items-center gap-1 text-sm text-candy-pink opacity-75 hover:opacity-100 animate-pulse"
-                                    >
-                                        <StopCircle size={14} />
-                                        <span>Stop</span>
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={() => onPlayAudio?.(msg.audio_base64!, msg.id)}
-                                        className="mt-2 flex items-center gap-1 text-sm opacity-75 hover:opacity-100"
-                                    >
-                                        <Volume2 size={14} />
-                                        <span>Play</span>
-                                    </button>
-                                )
-                            )}
+                                {msg.audio_base64 && msg.role === 'assistant' && (
+                                    currentAudioId === msg.id && onStopAudio ? (
+                                        <button
+                                            onClick={onStopAudio}
+                                            className="mt-2 flex items-center gap-1 text-sm text-candy-pink opacity-75 hover:opacity-100 animate-pulse"
+                                        >
+                                            <StopCircle size={14} />
+                                            <span>Stop</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={() => onPlayAudio?.(msg.audio_base64!, msg.id)}
+                                            className="mt-2 flex items-center gap-1 text-sm opacity-75 hover:opacity-100"
+                                        >
+                                            <Volume2 size={14} />
+                                            <span>Play</span>
+                                        </button>
+                                    )
+                                )}
+                            </div>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
 
                 {loading && (
                     <div className="flex justify-start">
