@@ -10,6 +10,32 @@ import logging
 # Reuse core logger/handlers
 logger = logging.getLogger("mycandy.core")
 
+# Tool definitions for function calling
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Generate an image from a natural language description. Use this when the user explicitly asks for a visual representation or image.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Detailed visual description of what to generate (e.g., 'a dragon flying over Berlin at sunset')"
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "enum": ["1:1", "16:9", "9:16"],
+                        "description": "Aspect ratio for the image. Default is 9:16 (portrait)."
+                    }
+                },
+                "required": ["prompt"]
+            }
+        }
+    }
+]
+
 
 class LLMClient:
     def __init__(self, config: Dict[str, Any]):
@@ -125,6 +151,7 @@ class LLMClient:
         character: Dict[str, Any],
         history: List[Dict[str, str]],
         stream: bool,
+        enable_tools: bool = True,  # NEW: Allow disabling tools
     ) -> Any:
         host = f"http://127.0.0.1:{self.cfg['llm']['llama_cpp_server']['port']}"
         headers = {"Content-Type": "application/json"}
@@ -139,11 +166,19 @@ class LLMClient:
             "seed": int(time.time() * 1000) % 1000000000,
             "max_tokens": 200,  # Increased to prevent cutoff (was 80)
         }
+        
+        # Add tools if enabled (function calling models only)
+        if enable_tools and self.cfg.get("llm", {}).get("enable_function_calling", False):
+            payload["tools"] = TOOLS
+            payload["tool_choice"] = "auto"  # Let model decide
+            logger.info("[LLM] Tool calling enabled with %d tools", len(TOOLS))
+        
         try:
             logger.info(
-                "llm payload llama.cpp: history=%s last_user=%s",
+                "llm payload llama.cpp: history=%s last_user=%s tools=%s",
                 len(history),
                 (history[-1]["content"] if history else "")[:200],
+                bool(payload.get("tools")),
             )
             logger.info("llm prompt system: %s", payload["messages"][0]["content"][:500])
         except Exception:
@@ -168,7 +203,18 @@ class LLMClient:
                             continue
                         resp.raise_for_status()
                         data = resp.json()
-                        reply = data["choices"][0]["message"]["content"]
+                        
+                        # Check if response contains tool calls
+                        choice = data["choices"][0]
+                        message = choice["message"]
+                        
+                        # Return full message object if tools are enabled (includes tool_calls)
+                        if enable_tools and message.get("tool_calls"):
+                            logger.info(f"[LLM] Tool calls detected: {len(message['tool_calls'])} call(s)")
+                            return message  # Return full message with tool_calls
+                        
+                        # Otherwise just return content
+                        reply = message.get("content", "")
                         print(f"[llm] llama.cpp ok ({label}) len={len(reply)} model={body['model']}")
                         return reply
                     except Exception as exc:

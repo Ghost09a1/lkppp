@@ -5,6 +5,7 @@
     "ui_port": 8000,
     "llm": {
         "mode": "gguf",
+        "enable_function_calling": false,
         "llama_cpp_server": {
             "binary_path": "bins/llama-server.exe",
             "model_path": "models/llm/MN-12B-Celeste-V1.9-Q4_K_M.gguf",

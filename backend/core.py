@@ -702,12 +702,25 @@ def create_app() -> FastAPI:
         logger.info("chat llm input char=%s history=%s last_user=%s", char_id, len(history), (user_text or "")[:500])
         fallback_msg = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
         reply = None
+        tool_calls = None
+        
         # retry loop to avoid showing fallback when the model is still warming up
         for attempt in range(3):
             logger.info("llm call attempt=%s char=%s user='%s' history_len=%s", attempt, char_id, (user_text or "")[:200], len(history))
-            reply = await llm_client.generate_chat(character, history, stream=False)
-            if reply and reply != fallback_msg:
+            llm_response = await llm_client.generate_chat(character, history, stream=False)
+            
+            # Check if response is a dict (tool calling response) or string (normal response)
+            if isinstance(llm_response, dict):
+                # Tool calling response
+                reply = llm_response.get("content", "")
+                tool_calls = llm_response.get("tool_calls", [])
+                logger.info(f"[CHAT] LLM returned tool calls: {len(tool_calls)} call(s)")
                 break
+            elif llm_response and llm_response != fallback_msg:
+                # Normal text response
+                reply = llm_response
+                break
+            
             await asyncio.sleep(0.8)
 
         if reply is None or reply == fallback_msg:
@@ -788,6 +801,42 @@ def create_app() -> FastAPI:
                     logger.warning(f"[CHAT] Image generation failed: {img_res.get('error')}")
             except Exception as exc:
                 logger.error(f"[CHAT] Image generation exception: {exc}")
+        
+        # Process tool calls if present (Phase 2: Tool Calling)
+        if tool_calls and isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                func_name = tool_call.get("function", {}).get("name")
+                if func_name == "generate_image" and payload and payload.enable_image:
+                    try:
+                        import json as _json
+                        args = _json.loads(tool_call.get("function", {}).get("arguments", "{}"))
+                        llm_prompt = args.get("prompt", "")
+                        aspect_ratio = args.get("aspect_ratio", "9:16")
+                        
+                        # Map aspect ratio to dimensions
+                        dimensions = {
+                            "1:1": (512, 512),
+                            "16:9": (768, 432),
+                            "9:16": (512, 768)
+                        }
+                        width, height = dimensions.get(aspect_ratio, (512, 768))
+                        
+                        # Add Pony tags
+                        pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
+                        final_prompt = f"{pony_tags}, {llm_prompt}"
+                        if character.get("visual_style"):
+                            final_prompt += f", {character.get('visual_style')}"
+                        
+                        logger.info(f"[CHAT] Tool call: generate_image with prompt='{llm_prompt}' aspect={aspect_ratio}")
+                        img_res = await media.generate_image(final_prompt, steps=20, width=width, height=height)
+                        
+                        if img_res.get("ok") and img_res.get("images_base64"):
+                            image_b64 = img_res.get("images_base64")[0]
+                            if image_b64 and not image_b64.startswith("data:"):
+                                image_b64 = f"data:image/png;base64,{image_b64}"
+                            logger.info("[CHAT] Tool call image generation successful.")
+                    except Exception as exc:
+                        logger.error(f"[CHAT] Tool call image generation failed: {exc}")
 
         return {
             "reply": _clean_display_text(reply),  # Clean for display (no tokens)
