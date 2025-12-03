@@ -794,6 +794,40 @@ def create_app() -> FastAPI:
             "user_text": user_text,
             "transcription": transcript or "",
         }
+
+    @app.post("/posts/{char_id}/image")
+    async def generate_image_post(char_id: int, payload: ImagePayload):
+        """
+        Manual image generation endpoint.
+        """
+        logger.info(f"[IMAGE] Manual generation request for char {char_id}: {payload.prompt}")
+        
+        # Get character for style info
+        character = db.get_character(conn, char_id)
+        prompt = payload.prompt
+        if character and character.get("visual_style"):
+            prompt += f", {character.get('visual_style')}"
+            
+        res = await media.generate_image(
+            prompt=prompt,
+            negative=payload.negative,
+            steps=payload.steps,
+            width=payload.width,
+            height=payload.height
+        )
+        
+        # Format response for frontend
+        if res.get("ok") and res.get("images_base64"):
+            img_b64 = res.get("images_base64")[0]
+            if img_b64 and not img_b64.startswith("data:"):
+                img_b64 = f"data:image/png;base64,{img_b64}"
+            return {
+                "ok": True,
+                "prompt": payload.prompt,
+                "image_base64": img_b64
+            }
+        else:
+            raise HTTPException(status_code=500, detail=res.get("error", "Image generation failed"))
     @app.post("/api/chat/{char_id}")
     async def chat_api(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
         return await chat(char_id, payload, message, audio)
