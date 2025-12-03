@@ -92,23 +92,24 @@ if ($config.media.comfy_enabled) {
     if (Test-Path $comfyDir) {
         Write-Host "Starting ComfyUI..."
         
-        # Option 1: Use ComfyUI's own launcher if it exists
+        # Option 1: Use ComfyUI's own launcher (Preferred for Arc/Special setups)
         $comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
         if (Test-Path $comfyLauncher) {
             Write-Host "Using ComfyUI's launcher: $comfyLauncher"
-            # Start in ComfyUI's directory to ensure paths work
-            Start-Process -FilePath $comfyLauncher -WorkingDirectory $comfyDir
+            # Run the bat file inside the new PowerShell window via cmd /c
+            $comfyCommand = "Set-Location '$comfyDir'; cmd /c 'RUN_Launcher.bat'"
+            Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
         }
         # Option 2: Direct Python invocation if standalone Python exists
         elseif ((Test-Path $comfyPython) -and (Test-Path $comfyMain)) {
             Write-Host "Using ComfyUI standalone Python: $comfyPython"
-            $comfyCommand = "Set-Location '$comfyDir'; & '$comfyPython' '$comfyMain' --port 8002"
+            $comfyCommand = "Set-Location '$comfyDir'; & '$comfyPython' '$comfyMain' --port 8188"
             Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
         }
         # Option 3: Use system/venv Python
         elseif (Test-Path $comfyMain) {
             Write-Host "Using system Python for ComfyUI"
-            $comfyCommand = "Set-Location '$comfyDir'; & '$python' '$comfyMain' --port 8002"
+            $comfyCommand = "Set-Location '$comfyDir'; & '$python' '$comfyMain' --port 8188"
             Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
         }
         else {
@@ -136,8 +137,8 @@ if (Test-Path $rvcDir) {
         Write-Host "Using Python for RVC: $rvcPython"
 
         # RVC WebUI needs to be run from its own directory
-        # ADDED --listen-port 7866 to avoid conflict
-        $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --port 7866"
+        # ADDED --listen-port 7867 to avoid conflict
+        $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --port 7867 --pycmd '$rvcPython' --noautoopen"
         Start-NewPowerShell -Name "RVC WebUI" -Command $rvcCommand
         
     }

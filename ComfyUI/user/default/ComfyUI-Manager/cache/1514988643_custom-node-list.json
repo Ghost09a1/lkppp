@@ -37459,6 +37459,79 @@
             "title": "BokehDiffusionComfyUI"
         },
         {
+            "author": "HAL-XP",
+            "description": "A UI suite for ComfyUI including Focus mode and layout enhancements.",
+            "files": [
+                "https://github.com/hal-xp/halxp-comfy"
+            ],
+            "install_type": "git-clone",
+            "reference": "https://github.com/hal-xp/halxp-comfy",
+            "title": "HALXP-Comfy"
+        },
+        {
+            "author": "BuddyBytes",
+            "description": "Resolution picker and latent generator for ComfyUI. Select presets like HD, FullHD, 2K, 4K, 8K with aspect ratios (1:1, 9:16, 4:5, 21:9 etc.) via dropdowns. Automatically snaps width/height to latent-safe multiples of 64. Ideal for EmptyLatentImage, AnimateDiff, ControlNet, video formats, and KSampler workflows. Outputs clean INT values or ready-to-use LATENT tensor.",
+            "files": [
+                "https://github.com/buddy-bytes/ComfyUI-SmartResolutionToolkit"
+            ],
+            "install_type": "git-clone",
+            "reference": "https://github.com/buddy-bytes/ComfyUI-SmartResolutionToolkit",
+            "title": "Smart Resolution Toolkit"
+        },
+        {
+            "author": "Bharanidharan",
+            "description": "Custom Node to implement iSeeBetter upscaling method.",
+            "files": [
+                "https://github.com/llikethat/ComfyUI-iseebetter"
+            ],
+            "install_type": "git-clone",
+            "reference": "https://github.com/llikethat/ComfyUI-iseebetter",
+            "title": "iSeeBetter Node for ComfyUI"
+        },
+        {
+            "author": "Pondowner857",
+            "description": "Remote workflow executor node - Execute workflows on remote ComfyUI servers. Supports image/text/audio/video input and output.",
+            "files": [
+                "https://github.com/Pondowner857/comfy_Pond_Nodes_V2"
+            ],
+            "id": "comfy_Pond_Nodes_V2",
+            "install_type": "git-clone",
+            "reference": "https://github.com/Pondowner857/comfy_Pond_Nodes_V2",
+            "title": "ComfyUI Remote Workflow Executor"
+        },
+        {
+            "author": "luxdelux7",
+            "description": "Custom face detection and segmentation for ComfyUI with automatic face fixing, intelligent color grading, and iterative refinement. Custom-trained models optimized for realistic, anime, and NSFW content.",
+            "files": [
+                "https://github.com/luxdelux7/ComfyUI-Forbidden-Vision"
+            ],
+            "install_type": "git-clone",
+            "nodename_pattern": "ForbiddenVision",
+            "reference": "https://github.com/luxdelux7/ComfyUI-Forbidden-Vision",
+            "title": "Forbidden Vision"
+        },
+        {
+            "author": "ah-kun",
+            "description": "Fail-safe Google Translate prompt node for ComfyUI (retry + caching).",
+            "files": [
+                "https://github.com/ah-kun/ComfyUI-FailSafe-Translate-Node"
+            ],
+            "install_type": "git-clone",
+            "reference": "https://github.com/ah-kun/ComfyUI-FailSafe-Translate-Node",
+            "title": "ComfyUI-FailSafe-Translate-Node"
+        },
+        {
+            "author": "Kazama-Suichiku",
+            "description": "ComfyUI-Meshy is a 3D generation extension based on Meshy AI API. It provides Text-to-3D and Image-to-3D capabilities within ComfyUI, allowing you to generate 3D models directly from text prompts or images. Supports multiple AI models (Meshy-4, Meshy-5, Meshy-6) with customizable topology, polygon count, and PBR settings.",
+            "files": [
+                "https://github.com/Kazama-Suichiku/ComfyUI-Meshy"
+            ],
+            "id": "comfyui-meshy",
+            "install_type": "git-clone",
+            "reference": "https://github.com/Kazama-Suichiku/ComfyUI-Meshy",
+            "title": "ComfyUI-Meshy"
+        },
+        {
             "author": "Ser-Hilary",
             "description": "Nodes:sizing_node. Size calculation node related to image size in prompts supported by SDXL.",
             "files": [
