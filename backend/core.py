@@ -767,7 +767,10 @@ def create_app() -> FastAPI:
                 # Ideally, we would ask the LLM to describe the scene, but that requires a second LLM call or complex prompting.
                 # We will use the User Text + Character Visual Style as prompt.
                 
-                prompt = user_text
+                # Pony model requires specific score tags for best results
+                pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
+                prompt = f"{pony_tags}, {user_text}"
+                
                 # Append character visual style if available to improve consistency
                 if character.get("visual_style"):
                     prompt += f", {character.get('visual_style')}"
@@ -804,7 +807,11 @@ def create_app() -> FastAPI:
         
         # Get character for style info
         character = db.get_character(conn, char_id)
-        prompt = payload.prompt
+        
+        # Pony model requires specific score tags
+        pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
+        prompt = f"{pony_tags}, {payload.prompt}"
+        
         if character and character.get("visual_style"):
             prompt += f", {character.get('visual_style')}"
             
@@ -827,7 +834,9 @@ def create_app() -> FastAPI:
                 "image_base64": img_b64
             }
         else:
-            raise HTTPException(status_code=500, detail=res.get("error", "Image generation failed"))
+            error_msg = res.get("error", "Image generation failed")
+            logger.error(f"[IMAGE] Generation failed for char {char_id}: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
     @app.post("/api/chat/{char_id}")
     async def chat_api(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
         return await chat(char_id, payload, message, audio)
