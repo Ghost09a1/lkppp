@@ -159,12 +159,12 @@ class LLMClient:
             "model": self.llama_model_path,
             "stream": stream,
             "messages": [{"role": "system", "content": self._system_prompt(character)}] + history,
-            "temperature": 0.9,
-            # Avoid llama.cpp prompt cache reuse that can serve stale replies
-            "cache_prompt": False,
+            "temperature": 0.7,  # Reduced from 0.9 to prevent token hallucinations
+            # Enable prompt caching for speed
+            "cache_prompt": True,
             "id": f"char-{character.get('id','unknown')}-{int(time.time()*1000)}",
             "seed": int(time.time() * 1000) % 1000000000,
-            "max_tokens": 200,  # Increased to prevent cutoff (was 80)
+            "max_tokens": 800,  # Increased for deeper roleplay
         }
         
         # Add tools if enabled (function calling models only)
@@ -183,7 +183,7 @@ class LLMClient:
             logger.info("llm prompt system: %s", payload["messages"][0]["content"][:500])
         except Exception:
             pass
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:  # 5 min for slow CPU
             if stream:
                 return self._stream_llama_cpp(client, host, headers, payload)
             attempts = [

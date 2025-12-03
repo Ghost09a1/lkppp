@@ -10,10 +10,10 @@
             "binary_path": "bins/llama-server.exe",
             "model_path": "models/llm/MN-12B-Celeste-V1.9-Q4_K_M.gguf",
             "port": 8081,
-            "n_ctx": 8192,
-            "n_threads": 12,
+            "n_ctx": 2048,
+            "n_threads": 6,
             "gpu_layers": 0,
-            "batch": 128
+            "batch": 32
         },
         "ollama": {
             "model": "celeste-local",

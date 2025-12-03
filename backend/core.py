@@ -84,7 +84,14 @@ def _clean_tts_text(text: str) -> str:
 
     cleaned = "".join(parts)
     cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    return cleaned.strip().strip('"').strip("'")
+    cleaned = cleaned.strip().strip('"').strip("'")
+
+    # [FALLBACK] If cleaning resulted in empty text (e.g. everything was in *asterisks*),
+    # use the original text but strip the asterisks so we hear SOMETHING.
+    if not cleaned and without_markers.strip():
+        cleaned = without_markers.replace("*", "").strip()
+    
+    return cleaned
 
 
 def _clean_display_text(text: str) -> str:
@@ -98,8 +105,8 @@ def _clean_display_text(text: str) -> str:
     text = re.sub(r"<\|audio_start\|>|<audio_start>", "", text, flags=re.IGNORECASE)
     text = re.sub(r"<\|audio_end\|>|<audio_end>", "", text, flags=re.IGNORECASE)
     
-    # Remove ALL custom tokens
-    text = re.sub(r"<custom_token_\w+>", "", text, flags=re.IGNORECASE)
+    # Remove ALL custom tokens (robust: handles missing closing bracket)
+    text = re.sub(r"<custom_token_[^>]*>?", "", text, flags=re.IGNORECASE)
     
     # Remove emote markers like [EMOTE:...]
     text = re.sub(r"\[EMOTE:.*?\]", "", text, flags=re.IGNORECASE)
@@ -155,7 +162,9 @@ def _has_image_intent(text: str) -> bool:
     phrases = [
         "schick mir ein bild", "zeig mir ein bild", "mach ein bild", "send me a picture", "show me a picture",
         "generate an image", "create an image", "draw me", "male mir", "zeichne mir",
-        "schick mir ein foto", "send me a photo", "show me a photo", "selfie"
+        "schick mir ein foto", "send me a photo", "show me a photo", "selfie",
+        "zeig mir deine", "zeig mir dich", "zeig dich", "wie siehst du aus", "what do you look like",
+        "schick mir nudes", "send nudes", "zeig mir alles", "show me everything"
     ]
     return any(p in t for p in phrases)
 
@@ -639,6 +648,7 @@ def create_app() -> FastAPI:
                 should_gen_image = True
             elif payload.enable_image:
                 should_gen_image = True
+                logger.info(f"[CHAT] Auto-image enabled, will generate image for: {user_text[:50]}...")
         
         # Magic phrase detection (only if not already forced/enabled, or to override disable)
         # Actually, if enable_image is False, we still want to allow magic phrases to trigger it (as per requirements)
@@ -696,9 +706,14 @@ def create_app() -> FastAPI:
         memory.add_message(char_id, "user", user_text)
         # DEBUG: send only latest user to avoid stale history contamination
         history = [{"role": "user", "content": user_text}]
-        # Cache buster to avoid prompt-cache reuse in llama.cpp
-        import time as _time
-        history.insert(0, {"role": "system", "content": f"turn_id:{int(_time.time()*1000)}"})
+        
+        # [PHASE 1 FIX] Strong hint for image generation if enabled
+        if payload and payload.enable_image:
+            history.insert(1, {
+                "role": "system", 
+                "content": "SYSTEM NOTE: The user has ENABLED automatic image generation. If the user's message implies a visual request (e.g. 'show me', 'send a picture', 'what do you look like'), you MUST include the tag [GENERATE_IMAGE] at the end of your response."
+            })
+            
         logger.info("chat llm input char=%s history=%s last_user=%s", char_id, len(history), (user_text or "")[:500])
         fallback_msg = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
         reply = None

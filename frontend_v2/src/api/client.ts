@@ -7,6 +7,7 @@ export const api = axios.create({
     headers: {
         'Content-Type': 'application/json',
     },
+    timeout: 600000, // 600 seconds (10 min) to be absolutely safe
 });
 
 export const apiClient = {
