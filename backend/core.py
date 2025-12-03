@@ -147,6 +147,19 @@ def _is_non_erotic_intent(text: str) -> bool:
     return any(k in t for k in keywords)
 
 
+def _has_image_intent(text: str) -> bool:
+    """
+    Check if the user is explicitly asking for an image.
+    """
+    t = (text or "").lower()
+    phrases = [
+        "schick mir ein bild", "zeig mir ein bild", "mach ein bild", "send me a picture", "show me a picture",
+        "generate an image", "create an image", "draw me", "male mir", "zeichne mir",
+        "schick mir ein foto", "send me a photo", "show me a photo", "selfie"
+    ]
+    return any(p in t for p in phrases)
+
+
 def _dedupe_reply(text: str) -> str:
     """
     Remove common duplication patterns the model sometimes returns:
@@ -298,6 +311,8 @@ class CharacterPayload(BaseModel):
 class ChatPayload(BaseModel):
     message: str
     enable_tts: bool = True  # Default to True for backward compatibility
+    enable_image: bool = False
+    force_image: bool = False
 
 
 class TtsPayload(BaseModel):
@@ -616,8 +631,22 @@ def create_app() -> FastAPI:
                             enable_tts_from_request = bool(data.get("enable_tts", True))
             except Exception:
                 pass
+        
+        # Determine image generation intent
+        should_gen_image = False
+        if payload:
+            if payload.force_image:
+                should_gen_image = True
+            elif payload.enable_image:
+                should_gen_image = True
+        
+        # Magic phrase detection (only if not already forced/enabled, or to override disable)
+        # Actually, if enable_image is False, we still want to allow magic phrases to trigger it (as per requirements)
+        if not should_gen_image and _has_image_intent(user_text):
+            should_gen_image = True
+            logger.info(f"[CHAT] Magic phrase detected in '{user_text}', enabling image generation.")
 
-        logger.info("chat recv char=%s len=%s audio=%s", char_id, len(user_text), bool(audio))
+        logger.info("chat recv char=%s len=%s audio=%s image_gen=%s", char_id, len(user_text), bool(audio), should_gen_image)
 
         if not user_text and audio is None:
             raise HTTPException(status_code=400, detail="Empty message.")
@@ -724,10 +753,44 @@ def create_app() -> FastAPI:
             logger.info("[CHAT] TTS skipped (enable_tts=False)")
             audio_b64 = None
 
+            audio_b64 = None
+
+        # Image Generation
+        image_b64: str | None = None
+        if should_gen_image:
+            try:
+                # Use the user text as prompt, or the LLM reply if the user text was just "send me a picture"
+                # But usually we want the visual description. 
+                # Strategy: If user text is short/generic, maybe use LLM reply? 
+                # For now, stick to requirements: "Use last user message/text as prompt" (for manual)
+                # For auto-mode, we also use user text. 
+                # Ideally, we would ask the LLM to describe the scene, but that requires a second LLM call or complex prompting.
+                # We will use the User Text + Character Visual Style as prompt.
+                
+                prompt = user_text
+                # Append character visual style if available to improve consistency
+                if character.get("visual_style"):
+                    prompt += f", {character.get('visual_style')}"
+                
+                logger.info(f"[CHAT] Generating image for prompt: {prompt[:100]}...")
+                img_res = await media.generate_image(prompt, steps=20)
+                
+                if img_res.get("ok") and img_res.get("images_base64"):
+                    image_b64 = img_res.get("images_base64")[0]
+                    # Ensure data URI prefix
+                    if image_b64 and not image_b64.startswith("data:"):
+                        image_b64 = f"data:image/png;base64,{image_b64}"
+                    logger.info("[CHAT] Image generation successful.")
+                else:
+                    logger.warning(f"[CHAT] Image generation failed: {img_res.get('error')}")
+            except Exception as exc:
+                logger.error(f"[CHAT] Image generation exception: {exc}")
+
         return {
             "reply": _clean_display_text(reply),  # Clean for display (no tokens)
             "reply_tts": tts_text,  # Clean for TTS (keeps voice tokens)
             "audio_base64": audio_b64,
+            "image_base64": image_b64,
             "user_text": user_text,
             "transcription": transcript or "",
         }

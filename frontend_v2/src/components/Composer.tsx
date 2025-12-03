@@ -1,5 +1,5 @@
 import React from 'react';
-import { Send, Mic, Image as ImageIcon, Book, Volume2, VolumeX } from 'lucide-react';
+import { Send, Mic, Image as ImageIcon, Book, Volume2, VolumeX, Sparkles } from 'lucide-react';
 
 interface ComposerProps {
     input: string;
@@ -13,6 +13,8 @@ interface ComposerProps {
     onTogglePrompts: () => void;
     autoTTS?: boolean;
     onToggleTTS?: () => void;
+    autoImage?: boolean;
+    onToggleAutoImage?: () => void;
     inputRef?: React.RefObject<HTMLTextAreaElement>;
 }
 
@@ -28,6 +30,8 @@ export default function Composer({
     onTogglePrompts,
     autoTTS,
     onToggleTTS,
+    autoImage,
+    onToggleAutoImage,
     inputRef
 }: ComposerProps) {
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -55,6 +59,16 @@ export default function Composer({
                         title={autoTTS ? "Disable Auto-TTS" : "Enable Auto-TTS"}
                     >
                         {autoTTS ? <Volume2 size={20} /> : <VolumeX size={20} />}
+                    </button>
+                )}
+
+                {onToggleAutoImage && (
+                    <button
+                        onClick={onToggleAutoImage}
+                        className={`p-3 transition-colors ${autoImage ? 'text-pink-500' : 'text-gray-400 hover:text-gray-300'}`}
+                        title={autoImage ? "Disable Auto-Image" : "Enable Auto-Image"}
+                    >
+                        <Sparkles size={20} />
                     </button>
                 )}
 

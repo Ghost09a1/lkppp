@@ -137,6 +137,7 @@ class LLMClient:
             "cache_prompt": False,
             "id": f"char-{character.get('id','unknown')}-{int(time.time()*1000)}",
             "seed": int(time.time() * 1000) % 1000000000,
+            "max_tokens": 200,  # Increased to prevent cutoff (was 80)
         }
         try:
             logger.info(

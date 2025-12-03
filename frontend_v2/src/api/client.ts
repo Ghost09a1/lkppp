@@ -11,9 +11,14 @@ export const api = axios.create({
 
 export const apiClient = {
     // Chat
-    async sendMessage(charId: number, message: string, enableTTS: boolean = true) {
-        console.log(`[API] Sending: charId=${charId}, msg="${message.substring(0, 50)}...", enableTTS=${enableTTS}`);
-        const body = { message, enable_tts: !!enableTTS };
+    async sendMessage(charId: number, message: string, enableTTS: boolean = true, enableImage: boolean = false, forceImage: boolean = false) {
+        console.log(`[API] Sending: charId=${charId}, msg="${message.substring(0, 50)}...", enableTTS=${enableTTS}, enableImage=${enableImage}, forceImage=${forceImage}`);
+        const body = {
+            message,
+            enable_tts: !!enableTTS,
+            enable_image: !!enableImage,
+            force_image: !!forceImage
+        };
         console.log("[API] Request body:", body);
         const res = await api.post(`/chat/${charId}`, body);
         console.log("[API] Response:", res.data);

@@ -32,7 +32,7 @@ export default function App() {
   const [showCharEditor, setShowCharEditor] = useState(false);
   const [editingChar, setEditingChar] = useState<Character | null>(null);
   const [showMediaModal, setShowMediaModal] = useState(false);
-  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
+  const [mediaType] = useState<'image' | 'video'>('image');
   const [showSettings, setShowSettings] = useState(false);
   const [showPrompts, setShowPrompts] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -41,6 +41,10 @@ export default function App() {
   const [autoTTS, setAutoTTS] = useState(() => {
     const saved = localStorage.getItem('mycandy_auto_tts');
     return saved !== null ? JSON.parse(saved) : true;
+  });
+  const [autoImage, setAutoImage] = useState(() => {
+    const saved = localStorage.getItem('mycandy_auto_image');
+    return saved !== null ? JSON.parse(saved) : false;
   });
   const [currentAudioId, setCurrentAudioId] = useState<number | null>(null);
 
@@ -128,7 +132,7 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const res = await apiClient.sendMessage(selectedCharId, text, autoTTS);
+      const res = await apiClient.sendMessage(selectedCharId, text, autoTTS, autoImage);
 
       // AI Message
       const aiMsg: Message = {
@@ -136,7 +140,7 @@ export default function App() {
         role: 'assistant',
         content: res.reply || "(No response)",
         audio_base64: res.audio_base64,
-        image_base64: undefined
+        image_base64: res.image_base64
       };
       setMessages(prev => [...prev, aiMsg]);
 
@@ -204,6 +208,12 @@ export default function App() {
     localStorage.setItem('mycandy_auto_tts', JSON.stringify(newValue));
   };
 
+  const toggleAutoImage = () => {
+    const newValue = !autoImage;
+    setAutoImage(newValue);
+    localStorage.setItem('mycandy_auto_image', JSON.stringify(newValue));
+  };
+
   // STT Logic
   const startRecording = async () => {
     try {
@@ -244,12 +254,13 @@ export default function App() {
           setIsSending(true);
 
           try {
-            const llmRes = await apiClient.sendMessage(selectedCharId, transcript, autoTTS);
+            const llmRes = await apiClient.sendMessage(selectedCharId, transcript, autoTTS, autoImage);
             const aiMsg: Message = {
               id: Date.now() + 1,
               role: 'assistant',
               content: llmRes.reply || "(No response)",
-              audio_base64: llmRes.audio_base64
+              audio_base64: llmRes.audio_base64,
+              image_base64: llmRes.image_base64
             };
             setMessages(prev => [...prev, aiMsg]);
 
@@ -289,6 +300,62 @@ export default function App() {
   };
 
   // Media Logic
+  const handleManualImageGen = async () => {
+    if (!selectedCharId) return;
+
+    // Find last user message
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    if (!lastUserMsg || !lastUserMsg.content) {
+      alert("No user message found to generate image for.");
+      return;
+    }
+
+    const prompt = lastUserMsg.content;
+    setIsSending(true);
+
+    // Optimistic message
+    const tempId = Date.now();
+    setMessages(prev => [...prev, {
+      id: tempId,
+      role: 'assistant',
+      content: `Generating image for: "${prompt.substring(0, 20)}..."`
+    }]);
+
+    try {
+      // Use sendMessage with force_image=true to trigger the backend flow
+      // We pass an empty message string so the LLM might just return the image or a short confirmation
+      // But actually, we want to re-run the last prompt OR just trigger image gen.
+      // Better approach: Use the chat endpoint but with the SAME prompt and force_image=true.
+      // This might re-trigger text generation too, which is acceptable (or we can suppress it in backend if needed).
+      // Let's try sending the prompt again with force_image=true.
+
+      const res = await apiClient.sendMessage(selectedCharId, prompt, false, true, true); // autoTTS=false, enableImage=true, forceImage=true
+
+      // Update message with image
+      setMessages(prev => prev.map(m => {
+        if (m.id === tempId) {
+          return {
+            ...m,
+            content: res.reply || "Here is your image.",
+            image_base64: res.image_base64 ? (res.image_base64.startsWith('data:') ? res.image_base64 : `data:image/png;base64,${res.image_base64}`) : undefined
+          };
+        }
+        return m;
+      }));
+
+    } catch (err) {
+      console.error("Manual generation failed", err);
+      setMessages(prev => prev.map(m => {
+        if (m.id === tempId) {
+          return { ...m, content: "Image generation failed." };
+        }
+        return m;
+      }));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   const handleGenerateMedia = async (prompt: string, negative?: string) => {
     if (!selectedCharId) return;
 
@@ -377,10 +444,12 @@ export default function App() {
           onRecordStop={stopRecording}
           isRecording={isRecording}
           isSending={isSending}
-          onImageClick={() => { setMediaType('image'); closeAllModals(); setShowMediaModal(true); }}
+          onImageClick={handleManualImageGen}
           onTogglePrompts={() => { closeAllModals(); setShowPrompts(prev => !prev); }}
           autoTTS={autoTTS}
           onToggleTTS={toggleAutoTTS}
+          autoImage={autoImage}
+          onToggleAutoImage={toggleAutoImage}
           inputRef={inputRef}
         />
       </div>
