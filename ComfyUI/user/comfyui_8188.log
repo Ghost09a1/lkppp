@@ -449,3 +449,20 @@ Import times for custom nodes:
 [2025-12-03 09:12:26.622] FETCH ComfyRegistry Data: 30/109
 [2025-12-03 09:12:30.155] FETCH ComfyRegistry Data: 35/109
 [2025-12-03 09:12:34.521] FETCH ComfyRegistry Data: 40/109
+[2025-12-03 09:12:38.108] FETCH ComfyRegistry Data: 45/109
+[2025-12-03 09:12:41.683] FETCH ComfyRegistry Data: 50/109
+[2025-12-03 09:12:45.950] FETCH ComfyRegistry Data: 55/109
+[2025-12-03 09:12:49.537] FETCH ComfyRegistry Data: 60/109
+[2025-12-03 09:12:54.440] FETCH ComfyRegistry Data: 65/109
+[2025-12-03 09:12:58.036] FETCH ComfyRegistry Data: 70/109
+[2025-12-03 09:13:01.666] FETCH ComfyRegistry Data: 75/109
+[2025-12-03 09:13:05.364] FETCH ComfyRegistry Data: 80/109
+[2025-12-03 09:13:09.025] FETCH ComfyRegistry Data: 85/109
+[2025-12-03 09:13:12.682] FETCH ComfyRegistry Data: 90/109
+[2025-12-03 09:13:16.379] FETCH ComfyRegistry Data: 95/109
+[2025-12-03 09:13:20.056] FETCH ComfyRegistry Data: 100/109
+[2025-12-03 09:13:23.772] FETCH ComfyRegistry Data: 105/109
+[2025-12-03 09:13:27.183] FETCH ComfyRegistry Data [DONE]
+[2025-12-03 09:13:27.708] [ComfyUI-Manager] default cache updated: https://api.comfy.org/nodes
+[2025-12-03 09:13:27.783] FETCH DATA from: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json [DONE]
+[2025-12-03 09:13:28.025] [ComfyUI-Manager] All startup tasks have been completed.
