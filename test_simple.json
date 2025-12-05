@@ -1,0 +1,10 @@
+{
+    "model": "mythomax-l2-13b.Q4_K_M.gguf",
+    "messages": [
+        {
+            "role": "user",
+            "content": "Hi"
+        }
+    ],
+    "max_tokens": 10
+}

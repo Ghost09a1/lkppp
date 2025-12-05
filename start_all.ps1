@@ -39,8 +39,22 @@ else {
 }
 
 
+# --- Helper function to kill process on a specific port ---
+function Kill-PortProcess {
+    param([int]$Port, [string]$Name)
+    $procs = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+    if ($procs) {
+        Write-Host "Stopping existing '$Name' process(es) on port $Port..."
+        foreach ($p in $procs) {
+            try { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        Start-Sleep -Seconds 3  # Increased from 1 second for better reliability
+    }
+}
+
 # --- 1. Start MyCandyLocal Core (Backend, TTS, UI Opener) ---
 # This is started first as it's the central piece.
+Kill-PortProcess -Port 8000 -Name "MyCandyLocal Core"
 Start-NewPowerShell -Name "MyCandyLocal Core" -Command "& '$python' app_launcher.py"
 
 
@@ -56,9 +70,28 @@ if ($config.llm.mode -eq "gguf") {
         }
         
         Write-Host "Preparing to start LLaMA server on port $($llmSettings.port)..."
+        
+        # Enhanced cleanup: Kill by port AND by process name
+        Kill-PortProcess -Port $llmSettings.port -Name "LLaMA Server"
+        Get-Process -Name "llama-server" -ErrorAction SilentlyContinue | Stop-Process -Force
+        Get-Process | Where-Object { $_.Path -like "*llama-server.exe*" } -ErrorAction SilentlyContinue | Stop-Process -Force
+        
+        # Wait longer to ensure port is fully released
+        Start-Sleep -Seconds 3
+        
+        # Verify port is actually free
+        $portCheck = Get-NetTCPConnection -LocalPort $llmSettings.port -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Listen" }
+        if ($portCheck) {
+            Write-Warning "Port $($llmSettings.port) is still in use by PID $($portCheck.OwningProcess). Attempting forced cleanup..."
+            Stop-Process -Id $portCheck.OwningProcess -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
+        
+        Write-Host "Starting LLaMA server with model: $modelPath"
+        
         $llamaArgs = @(
-            "-m", "'$modelPath'",
-            "--host", "'$($config.backend_host)'",
+            "-m", "`"$modelPath`"",
+            "--host", "$($config.backend_host)",
             "--port", $llmSettings.port,
             "--ctx-size", $llmSettings.n_ctx,
             "--threads", $llmSettings.n_threads,
@@ -69,6 +102,7 @@ if ($config.llm.mode -eq "gguf") {
         }
         
         $llamaCommand = "& '$llamaExe' $($llamaArgs -join ' ')"
+        Write-Host "LLaMA command: $llamaCommand"
         Start-NewPowerShell -Name "LLaMA Server" -Command $llamaCommand
 
     }
@@ -81,6 +115,7 @@ else {
 }
 
 
+
 # --- 3. Start ComfyUI Server ---
 if ($config.media.comfy_enabled) {
     $comfyDir = Join-Path $root "ComfyUI"
@@ -91,6 +126,7 @@ if ($config.media.comfy_enabled) {
     
     if (Test-Path $comfyDir) {
         Write-Host "Starting ComfyUI..."
+        Kill-PortProcess -Port 8188 -Name "ComfyUI"
         
         # Option 1: Use ComfyUI's own launcher (Preferred for Arc/Special setups)
         $comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
@@ -138,6 +174,7 @@ if (Test-Path $rvcDir) {
 
         # RVC WebUI needs to be run from its own directory
         # ADDED --listen-port 7867 to avoid conflict
+        Kill-PortProcess -Port 7867 -Name "RVC WebUI"
         $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --port 7867 --pycmd '$rvcPython' --noautoopen"
         Start-NewPowerShell -Name "RVC WebUI" -Command $rvcCommand
         

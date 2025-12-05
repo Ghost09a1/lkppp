@@ -29,7 +29,8 @@ def init_db(db_path: str) -> None:
             voice_model_path TEXT DEFAULT '',
             voice_training_status TEXT DEFAULT '',
             voice_error TEXT DEFAULT '',
-            language TEXT DEFAULT 'en'
+            language TEXT DEFAULT 'en',
+            avatar_path TEXT DEFAULT ''
         )
         """
     )
@@ -56,6 +57,17 @@ def init_db(db_path: str) -> None:
         )
         """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS character_reference_images (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            character_id INTEGER NOT NULL,
+            image_path TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(character_id) REFERENCES characters(id)
+        )
+        """
+    )
     # ensure new columns on existing DBs
     expected_cols = {
         "voice_style": "TEXT DEFAULT ''",
@@ -68,6 +80,7 @@ def init_db(db_path: str) -> None:
         "voice_error": "TEXT DEFAULT ''",
         "language": "TEXT DEFAULT 'en'",
         "avatar_path": "TEXT DEFAULT ''",
+        "negative_prompt": "TEXT DEFAULT ''",
     }
     cur.execute("PRAGMA table_info(characters)")
     existing = {row[1] for row in cur.fetchall()}
@@ -90,12 +103,12 @@ def add_character(conn: sqlite3.Connection, payload: Dict[str, Any]) -> int:
         """
         INSERT INTO characters (name, description, visual_style, appearance_notes, personality, backstory, relationship_type, dos, donts,
                                 voice_style, voice_pitch_shift, voice_speed, voice_ref_path, voice_youtube_url, voice_model_path,
-                                voice_training_status, voice_error, language)
+                                voice_training_status, voice_error, language, negative_prompt)
         VALUES (:name, :description, :visual_style, :appearance_notes, :personality, :backstory, :relationship_type, :dos, :donts,
                 :voice_style, :voice_pitch_shift, :voice_speed, :voice_ref_path, :voice_youtube_url, :voice_model_path,
-                :voice_training_status, :voice_error, :language)
+                :voice_training_status, :voice_error, :language, :negative_prompt)
         """,
-        payload,
+        {**payload, "negative_prompt": payload.get("negative_prompt", "")},
     )
     conn.commit()
     return cur.lastrowid
@@ -158,3 +171,37 @@ def get_latest_summary(conn: sqlite3.Connection, character_id: int) -> Optional[
         (character_id,),
     ).fetchone()
     return row["content"] if row else None
+
+
+def get_character_reference_images(conn: sqlite3.Connection, char_id: int) -> List[Dict[str, Any]]:
+    cur = conn.cursor()
+    rows = cur.execute(
+        "SELECT id, image_path, created_at FROM character_reference_images WHERE character_id = ? ORDER BY created_at ASC",
+        (char_id,),
+    ).fetchall()
+    return [
+        {"id": row[0], "image_path": row[1], "created_at": row[2]}
+        for row in rows
+    ]
+
+
+def add_character_reference_image(conn: sqlite3.Connection, char_id: int, image_path: str) -> int:
+    cur = conn.cursor()
+    # Enforce max 5 images
+    count = cur.execute("SELECT COUNT(*) FROM character_reference_images WHERE character_id = ?", (char_id,)).fetchone()[0]
+    if count >= 5:
+        raise ValueError("Max 5 reference images allowed.")
+    
+    cur.execute(
+        "INSERT INTO character_reference_images (character_id, image_path) VALUES (?, ?)",
+        (char_id, image_path),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def delete_character_reference_image(conn: sqlite3.Connection, img_id: int, char_id: int) -> bool:
+    cur = conn.cursor()
+    cur.execute("DELETE FROM character_reference_images WHERE id = ? AND character_id = ?", (img_id, char_id))
+    conn.commit()
+    return cur.rowcount > 0

@@ -11,6 +11,7 @@ export interface Character {
     voice_style?: string;
     voice_model_path?: string;
     voice_training_status?: string;
+    reference_images?: { id: number; url: string }[];
 }
 
 export interface Message {

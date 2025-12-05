@@ -7,7 +7,7 @@ export const api = axios.create({
     headers: {
         'Content-Type': 'application/json',
     },
-    timeout: 600000, // 600 seconds (10 min) to be absolutely safe
+    timeout: 1800000, // 30 min (1800s) for slow CPU inference
 });
 
 export const apiClient = {
@@ -72,6 +72,21 @@ export const apiClient = {
             width: 512,
             height: 768,
         });
+        return res.data;
+    },
+
+    // Reference Images
+    async uploadReferenceImage(charId: number, file: File) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await api.post(`/characters/${charId}/reference_images`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return res.data;
+    },
+
+    async deleteReferenceImage(charId: number, imgId: number) {
+        const res = await api.delete(`/characters/${charId}/reference_images/${imgId}`);
         return res.data;
     },
 

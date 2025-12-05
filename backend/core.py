@@ -58,6 +58,9 @@ def _clean_tts_text(text: str) -> str:
     without_markers = re.sub(r"\[GENERATE_AUDIO.*?\]", "", without_markers, flags=re.IGNORECASE)
     # Remove [EMOTE:...] from TTS text
     without_markers = re.sub(r"\[EMOTE:.*?\]", "", without_markers, flags=re.IGNORECASE)
+    
+    # [FIX] Replace underscores/dashes with space to prevent TTS reading "underscore"
+    without_markers = re.sub(r"[_\-]+", " ", without_markers)
 
     parts: list[str] = []
     last = 0
@@ -111,11 +114,15 @@ def _clean_display_text(text: str) -> str:
     # Remove emote markers like [EMOTE:...]
     text = re.sub(r"\[EMOTE:.*?\]", "", text, flags=re.IGNORECASE)
 
-    # Remove [GENERATE_IMAGE] tag
+    # Remove generation tags AND their single-line prompts
+    # Match tag + optional space + text until newline/sentence end, but preserve rest of message
+    # Remove generation tags (content is inside brackets now)
     text = re.sub(r"\[GENERATE_IMAGE.*?\]", "", text, flags=re.IGNORECASE)
-
-    # [HOTFIX] Remove [GENERATE_AUDIO] tag
+    text = re.sub(r"\[GENERATE_VIDEO.*?\]", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\[GENERATE_AUDIO.*?\]", "", text, flags=re.IGNORECASE)
+    
+    # Remove ChatML special tokens that leak from llama.cpp
+    text = re.sub(r"<\|im_start\|>|<\|im_end\|>", "", text, flags=re.IGNORECASE)
     
     # [HOTFIX] Keep action markers *text* visible in UI
     # Do NOT escape asterisks, let Markdown handle it (italics)
@@ -315,6 +322,7 @@ class CharacterPayload(BaseModel):
     voice_training_status: str = ""
     voice_error: str = ""
     language: str = "en"
+    negative_prompt: str = ""
 
 
 class ChatPayload(BaseModel):
@@ -372,21 +380,28 @@ def create_app() -> FastAPI:
     )
 
     ui_dir = ROOT / config["paths"]["ui_dir"]
-    app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
-    # Vite build uses /assets/* paths by default; expose them at root /assets
-    assets_dir = ui_dir / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir), html=False), name="ui-assets")
-    app.mount("/avatars", StaticFiles(directory=str(avatars_dir), html=False), name="avatars")
-    app.mount("/images", StaticFiles(directory=str(images_dir), html=False), name="images")
-    app.mount("/videos", StaticFiles(directory=str(videos_dir), html=False), name="videos")
+    if ui_dir.exists():
+        app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+        # Also mount assets at root /assets because index.html expects them there
+        assets_dir = ui_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    def _first_wav_in_raw(char_id: int) -> str:
-        raw_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
-        if not raw_dir.exists():
-            return ""
-        candidates = sorted(raw_dir.glob("*.wav"))
-        return str(candidates[0]) if candidates else ""
+    
+    # Mount outputs directory for avatars, images, videos
+    outputs_dir = ROOT / "outputs"
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/outputs", StaticFiles(directory=str(outputs_dir)), name="outputs")
+
+    # Mount reference images directory
+    ref_dir = ROOT / "outputs" / "ref_images"
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/ref_images", StaticFiles(directory=str(ref_dir)), name="ref_images")
+
+    @app.get("/")
+    async def root():
+        return RedirectResponse(url="/ui")
+
 
     def _save_image_file(img_b64: str) -> str:
         content = img_b64.split(",", 1)[-1]
@@ -507,7 +522,14 @@ def create_app() -> FastAPI:
 
     @app.get("/characters")
     async def list_characters():
-        return {"characters": db.list_characters(conn)}
+        chars = db.list_characters(conn)
+        for char in chars:
+            refs = db.get_character_reference_images(conn, char["id"])
+            char["reference_images"] = [
+                {"id": r["id"], "url": f"/ref_images/{Path(r['image_path']).name}"}
+                for r in refs
+            ]
+        return {"characters": chars}
     # Aliases for /api/* compatibility (legacy)
     @app.get("/api/characters")
     async def list_characters_api():
@@ -526,6 +548,14 @@ def create_app() -> FastAPI:
         character = db.get_character(conn, char_id)
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
+        
+        # Add reference images
+        refs = db.get_character_reference_images(conn, char_id)
+        # Convert to list of paths/urls
+        character["reference_images"] = [
+            {"id": r["id"], "url": f"/ref_images/{Path(r['image_path']).name}"}
+            for r in refs
+        ]
         return character
     @app.get("/api/characters/{char_id}")
     async def get_character_api(char_id: int):
@@ -542,7 +572,7 @@ def create_app() -> FastAPI:
                 dos=:dos, donts=:donts, voice_style=:voice_style, voice_pitch_shift=:voice_pitch_shift,
                 voice_speed=:voice_speed, voice_ref_path=:voice_ref_path, voice_youtube_url=:voice_youtube_url,
                 voice_model_path=:voice_model_path, voice_training_status=:voice_training_status, voice_error=:voice_error,
-                language=:language
+                language=:language, negative_prompt=:negative_prompt
             WHERE id=:id
             """,
             {**payload.dict(), "id": char_id},
@@ -597,9 +627,7 @@ def create_app() -> FastAPI:
     async def chat(
         char_id: int,
         request: Request,
-        payload: ChatPayload | None = Body(None),
-        message: str = Form(""),
-        audio: UploadFile | None = File(None),
+        payload: ChatPayload,
     ):
         character = db.get_character(conn, char_id)
         if not character:
@@ -615,10 +643,13 @@ def create_app() -> FastAPI:
             except Exception:
                 pass
 
-        # Accept message from JSON body or form field
-        user_text = ((payload.message if payload else "") or message or "").strip()
+        # Accept message from JSON body
+        user_text = payload.message.strip()
         raw_user_text = user_text
         transcript: str | None = None
+        
+        # DEBUG: Log received payload
+        logger.info(f"[CHAT-DEBUG] payload={'present' if payload else 'None'}, enable_image={payload.enable_image if payload else 'N/A'}, force_image={payload.force_image if payload else 'N/A'}")
         
         # [HOTFIX] Also read enable_tts from raw JSON body as fallback
         enable_tts_from_request = None
@@ -656,45 +687,12 @@ def create_app() -> FastAPI:
             should_gen_image = True
             logger.info(f"[CHAT] Magic phrase detected in '{user_text}', enabling image generation.")
 
-        logger.info("chat recv char=%s len=%s audio=%s image_gen=%s", char_id, len(user_text), bool(audio), should_gen_image)
+        logger.info("chat recv char=%s len=%s image_gen=%s", char_id, len(user_text), should_gen_image)
 
-        if not user_text and audio is None:
+        if not user_text:
             raise HTTPException(status_code=400, detail="Empty message.")
 
-        # Handle optional audio -> save and transcribe (best-effort)
-        if audio is not None:
-            uploads_dir = ROOT / "outputs" / "uploads"
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-            upload_path = uploads_dir / f"{int(time.time())}_{audio.filename}"
-            with upload_path.open("wb") as f:
-                f.write(await audio.read())
-            _prune_uploads_dir(uploads_dir, keep=1)
-
-            # Convert to wav for more reliable STT
-            stt_input = upload_path
-            if upload_path.suffix.lower() != ".wav":
-                wav_converted = _convert_to_wav(upload_path)
-                if wav_converted is not None:
-                    stt_input = wav_converted
-                else:
-                    logger.warning("chat stt convert failed for %s", upload_path)
-            # Normalize volume to avoid near-silent captures
-            normalized = _normalize_audio(stt_input)
-            if normalized is not None:
-                stt_input = normalized
-
-            lang_pref = (character.get("language") or "").strip()
-            if not lang_pref:
-                lang_pref = media.config.get("media", {}).get("whisper_language", "")
-
-            # audio present: always prefer transcript
-            transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
-            logger.info("chat stt transcript_len=%s", len(transcript or ""))
-            if not transcript or not transcript.strip():
-                user_text = "(audio not recognized)"
-            else:
-                user_text = transcript.strip()
-                raw_user_text = transcript.strip()
+        # Audio upload is handled via separate /stt endpoint
 
         # Enforce language hint into the user text to steer the model
         lang_pref = (character.get("language") or "").strip().lower() or media.config.get("media", {}).get("whisper_language", "")
@@ -709,10 +707,18 @@ def create_app() -> FastAPI:
         
         # [PHASE 1 FIX] Strong hint for image generation if enabled
         if payload and payload.enable_image:
-            history.insert(1, {
+            history.insert(0, {
                 "role": "system", 
-                "content": "SYSTEM NOTE: The user has ENABLED automatic image generation. If the user's message implies a visual request (e.g. 'show me', 'send a picture', 'what do you look like'), you MUST include the tag [GENERATE_IMAGE] at the end of your response."
+                "content": (
+                    "SYSTEM NOTE: Auto-image generation is ENABLED. "
+                    "If the user asks for a picture, you MUST append a visual description tag at the end. "
+                    "CRITICAL: The description inside the tag MUST BE IN ENGLISH, even if the chat is German. "
+                    "Use detailed, descriptive keywords. NSFW/Adult content is allowed and expected for this roleplay. "
+                    "Format: [GENERATE_IMAGE <English description, comma separated tags>]. "
+                    "Example: [GENERATE_IMAGE solo, female, large breasts, cleavage, blushing, bedroom, cinematic lighting]"
+                )
             })
+            logger.info("[CHAT] Auto-image enabled, system note injected")
             
         logger.info("chat llm input char=%s history=%s last_user=%s", char_id, len(history), (user_text or "")[:500])
         fallback_msg = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
@@ -783,37 +789,55 @@ def create_app() -> FastAPI:
 
             audio_b64 = None
 
-        # Image Generation
+        # Image Generation - MOVED after LLM reply (see below) to use LLM's prompt
+        # when [GENERATE_IMAGE] tag is present
         image_b64: str | None = None
-        if should_gen_image:
+        # The actual image generation now happens after we have the LLM reply
+        
+        # Image Generation - Unified logic for both auto-image and LLM tags
+        # Priority: LLM prompt > User text (if auto-image enabled)
+        if (should_gen_image or (reply and "[GENERATE_IMAGE]" in reply.upper())):
             try:
-                # Use the user text as prompt, or the LLM reply if the user text was just "send me a picture"
-                # But usually we want the visual description. 
-                # Strategy: If user text is short/generic, maybe use LLM reply? 
-                # For now, stick to requirements: "Use last user message/text as prompt" (for manual)
-                # For auto-mode, we also use user text. 
-                # Ideally, we would ask the LLM to describe the scene, but that requires a second LLM call or complex prompting.
-                # We will use the User Text + Character Visual Style as prompt.
+                llm_prompt = None
                 
-                # Pony model requires specific score tags for best results
-                pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
-                prompt = f"{pony_tags}, {user_text}"
+                # Check if LLM provided a specific prompt via tag
+                if reply and "[GENERATE_IMAGE]" in reply.upper():
+                    import re
+                    match = re.search(r'\[GENERATE_IMAGE\](.+?)(?:\[|$)', reply, re.IGNORECASE | re.DOTALL)
+                    if match:
+                        llm_prompt = match.group(1).strip()
+                        logger.info(f"[CHAT] Using LLM-generated image prompt: {llm_prompt[:100]}...")
                 
-                # Append character visual style if available to improve consistency
-                if character.get("visual_style"):
-                    prompt += f", {character.get('visual_style')}"
+                # Fallback to safe default if no LLM prompt (but auto-image is enabled/forced)
+                if not llm_prompt and should_gen_image:
+                    # [FIX] Do NOT use user_text (raw chat) as it confuses the model (e.g. "Das wäre ein Traum" -> garbage image)
+                    # Instead, use a generic safe prompt for the character
+                    llm_prompt = "solo, looking at viewer, selfie, smile"
+                    logger.info(f"[CHAT] No specific image tag from LLM. Using safe fallback prompt: {llm_prompt}")
                 
-                logger.info(f"[CHAT] Generating image for prompt: {prompt[:100]}...")
-                img_res = await media.generate_image(prompt, steps=20)
-                
-                if img_res.get("ok") and img_res.get("images_base64"):
-                    image_b64 = img_res.get("images_base64")[0]
-                    # Ensure data URI prefix
-                    if image_b64 and not image_b64.startswith("data:"):
-                        image_b64 = f"data:image/png;base64,{image_b64}"
-                    logger.info("[CHAT] Image generation successful.")
-                else:
-                    logger.warning(f"[CHAT] Image generation failed: {img_res.get('error')}")
+                if llm_prompt:
+                    # Add Pony tags
+                    pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
+                    prompt = f"{pony_tags}, {llm_prompt}"
+                    
+                    # Append character visual style
+                    if character.get("visual_style"):
+                        prompt += f", {character.get('visual_style')}"
+                    
+                    # Fetch reference images
+                    refs = db.get_character_reference_images(conn, char_id)
+                    ref_paths = [r["image_path"] for r in refs]
+
+                    logger.info(f"[CHAT] Generating image: {prompt[:100]}...")
+                    img_res = await media.generate_image(prompt, steps=20, reference_images=ref_paths)
+                    
+                    if img_res.get("ok") and img_res.get("images_base64"):
+                        image_b64 = img_res.get("images_base64")[0]
+                        if image_b64 and not image_b64.startswith("data:"):
+                            image_b64 = f"data:image/png;base64,{image_b64}"
+                        logger.info("[CHAT] Image generation successful.")
+                    else:
+                        logger.warning(f"[CHAT] Image generation failed: {img_res.get('error')}")
             except Exception as exc:
                 logger.error(f"[CHAT] Image generation exception: {exc}")
         
@@ -842,8 +866,12 @@ def create_app() -> FastAPI:
                         if character.get("visual_style"):
                             final_prompt += f", {character.get('visual_style')}"
                         
+                        # Fetch reference images
+                        refs = db.get_character_reference_images(conn, char_id)
+                        ref_paths = [r["image_path"] for r in refs]
+
                         logger.info(f"[CHAT] Tool call: generate_image with prompt='{llm_prompt}' aspect={aspect_ratio}")
-                        img_res = await media.generate_image(final_prompt, steps=20, width=width, height=height)
+                        img_res = await media.generate_image(final_prompt, steps=20, width=width, height=height, reference_images=ref_paths)
                         
                         if img_res.get("ok") and img_res.get("images_base64"):
                             image_b64 = img_res.get("images_base64")[0]
@@ -949,7 +977,12 @@ def create_app() -> FastAPI:
     async def attach_image_to_post(char_id: int, payload: ImagePayload):
         if not (payload.prompt or "").strip():
             raise HTTPException(status_code=400, detail="Prompt required for image generation.")
-        result = await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height)
+        
+        # Fetch reference images
+        refs = db.get_character_reference_images(conn, char_id)
+        ref_paths = [r["image_path"] for r in refs]
+
+        result = await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height, reference_images=ref_paths)
         if not result.get("ok"):
             raise HTTPException(status_code=500, detail=result.get("error", "Image generation failed."))
         images = result.get("images_base64") or []
@@ -1031,6 +1064,46 @@ def create_app() -> FastAPI:
     @app.post("/api/characters/{char_id}/voice_sample")
     async def upload_voice_sample_api(char_id: int, file: bytes = None):
         return await upload_voice_sample(char_id, file)
+
+    @app.post("/characters/{char_id}/reference_images")
+    async def upload_reference_image(char_id: int, file: UploadFile = File(...)):
+        logging.getLogger("mycandy.core").info("Uploading reference image: filename=%s, content_type=%s", file.filename, file.content_type)
+        if not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail=f"Invalid image format: {file.content_type}")
+        
+        ref_dir = ROOT / "outputs" / "ref_images"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        
+        filename = f"ref_{char_id}_{uuid.uuid4().hex}{Path(file.filename).suffix}"
+        out_path = ref_dir / filename
+        
+        with out_path.open("wb") as f:
+            f.write(await file.read())
+            
+        try:
+            img_id = db.add_character_reference_image(conn, char_id, str(out_path))
+        except ValueError as e:
+            # Cleanup if DB fails (e.g. max limit reached)
+            out_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=str(e))
+            
+        return {"ok": True, "id": img_id, "url": f"/ref_images/{filename}"}
+
+    @app.delete("/characters/{char_id}/reference_images/{img_id}")
+    async def delete_reference_image(char_id: int, img_id: int):
+        # Get path first to delete file
+        refs = db.get_character_reference_images(conn, char_id)
+        target = next((r for r in refs if r["id"] == img_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="Image not found")
+            
+        if db.delete_character_reference_image(conn, img_id, char_id):
+            try:
+                Path(target["image_path"]).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return {"ok": True}
+        raise HTTPException(status_code=404, detail="Image not found")
 
     @app.post("/characters/{char_id}/avatar")
     async def upload_avatar(char_id: int, file: UploadFile = File(...)):

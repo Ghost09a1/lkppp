@@ -1,0 +1,107 @@
+{
+    "1": {
+        "inputs": {
+            "seed": 0,
+            "steps": "{{steps}}",
+            "cfg": 7.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "denoise": 1.0,
+            "model": [
+                "4",
+                0
+            ],
+            "positive": [
+                "5",
+                0
+            ],
+            "negative": [
+                "6",
+                0
+            ],
+            "latent_image": [
+                "7",
+                0
+            ]
+        },
+        "class_type": "KSampler",
+        "_meta": {
+            "title": "KSampler"
+        }
+    },
+    "4": {
+        "inputs": {
+            "ckpt_name": "{{checkpoint}}"
+        },
+        "class_type": "CheckpointLoaderSimple",
+        "_meta": {
+            "title": "Checkpoint Loader"
+        }
+    },
+    "5": {
+        "inputs": {
+            "text": "{{prompt}}",
+            "clip": [
+                "4",
+                1
+            ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+            "title": "Positive Prompt"
+        }
+    },
+    "6": {
+        "inputs": {
+            "text": "{{negative}}",
+            "clip": [
+                "4",
+                1
+            ]
+        },
+        "class_type": "CLIPTextEncode",
+        "_meta": {
+            "title": "Negative Prompt"
+        }
+    },
+    "7": {
+        "inputs": {
+            "width": "{{width}}",
+            "height": "{{height}}",
+            "batch_size": 1
+        },
+        "class_type": "EmptyLatentImage",
+        "_meta": {
+            "title": "Empty Latent Image"
+        }
+    },
+    "8": {
+        "inputs": {
+            "samples": [
+                "1",
+                0
+            ],
+            "vae": [
+                "4",
+                2
+            ]
+        },
+        "class_type": "VAEDecode",
+        "_meta": {
+            "title": "VAE Decode"
+        }
+    },
+    "9": {
+        "inputs": {
+            "images": [
+                "8",
+                0
+            ],
+            "filename_prefix": "mycandy_ipadapter"
+        },
+        "class_type": "SaveImage",
+        "_meta": {
+            "title": "Save Image"
+        }
+    }
+}

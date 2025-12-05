@@ -1,0 +1,16 @@
+{
+    "model": "mythomax",
+    "messages": [
+        {
+            "role": "system",
+            "content": "You are a helpful assistant."
+        },
+        {
+            "role": "user",
+            "content": "Hallo! Bitte antworte mit einem kurzen Satz."
+        }
+    ],
+    "stream": false,
+    "max_tokens": 50,
+    "temperature": 0.7
+}

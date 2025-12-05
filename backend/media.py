@@ -148,6 +148,7 @@ class MediaRouter:
         steps: int,
         width: int,
         height: int,
+        reference_images: list[str] = [],
     ) -> Dict[str, Any]:
         """
         Generate an image via a ComfyUI workflow.
@@ -163,11 +164,18 @@ class MediaRouter:
         which will be replaced before sending to ComfyUI.
         """
         media_cfg = self.config.get("media", {})
+        logging.getLogger("mycandy.core").info(f"[IMAGE-DEBUG] Generating ComfyUI image with Prompt: '{prompt}'")
         if not media_cfg.get("comfy_enabled", False):
             return {"ok": False, "error": "ComfyUI disabled in config."}
 
         base_url = (media_cfg.get("comfy_host") or "http://127.0.0.1:8188").rstrip("/")
-        workflow_path = media_cfg.get("comfy_workflow_path") or "comfy_workflows/txt2img_api.json"
+        
+        # Select workflow based on whether we have reference images
+        # IPAdapter models now installed: ip-adapter_sdxl_vit-h.safetensors & CLIP-ViT-H-14
+        if reference_images:
+            workflow_path = "comfy_workflows/txt2img_ipadapter.json"
+        else:
+            workflow_path = media_cfg.get("comfy_workflow_path") or "comfy_workflows/txt2img_api.json"
 
         # Workflow-Datei relativ zum Projekt-Root laden
         root = Path(__file__).resolve().parent.parent
@@ -216,6 +224,50 @@ class MediaRouter:
                         "{{height}}": height,
                         "{{checkpoint}}": checkpoint_name,
                     }
+                    # Handle reference images - copy to ComfyUI input directory
+                    comfy_input_dir = None
+                    import time
+                    timestamp = int(time.time() * 1000)  # Unique per request
+                    
+                    for i in range(5):
+                        key = f"{{{{reference_image_{i+1}}}}}"
+                        if i < len(reference_images):
+                            # ComfyUI's LoadImage can only read from input directory
+                            if comfy_input_dir is None:
+                                comfy_base = media_cfg.get("comfy_path", "")
+                                if not comfy_base:
+                                    # Fix: Check internal ComfyUI first (MyCandyLocal/ComfyUI)
+                                    root = Path(__file__).resolve().parent.parent
+                                    internal_comfy = root / "ComfyUI"
+                                    if internal_comfy.exists():
+                                        comfy_base = str(internal_comfy)
+                                    else:
+                                        # Fallback: sibling folder
+                                        comfy_base = str(root.parent / "ComfyUI")
+                                comfy_input_dir = Path(comfy_base) / "input"
+                                comfy_input_dir.mkdir(parents=True, exist_ok=True)
+                                logging.getLogger("mycandy.core").info(f"[COMFY] Using input dir: {comfy_input_dir}")
+                            
+                            # Copy with unique name per request (prevents char conflicts)
+                            src_path = Path(reference_images[i])
+                            if src_path.exists():
+                                # Simple unique filename: timestamp + index + extension
+                                ext = src_path.suffix
+                                dest_name = f"ref_{timestamp}_{i+1}{ext}"
+                                dest_path = comfy_input_dir / dest_name
+                                
+                                import shutil
+                                shutil.copy2(src_path, dest_path)
+                                logging.getLogger("mycandy.core").info(f"[COMFY] Copied ref: {dest_name}")
+                                
+                                # Use filename only (LoadImage expects this)
+                                mapping[key] = dest_name
+                            else:
+                                logging.getLogger("mycandy.core").warning(f"[COMFY] Ref not found: {src_path}")
+                                mapping[key] = ""
+                        else:
+                            mapping[key] = ""
+                    
                     return mapping.get(obj, obj)
                 return obj
 
@@ -291,6 +343,7 @@ class MediaRouter:
         steps: int = 20,
         width: int = 512,
         height: int = 768,
+        reference_images: list[str] = [],
     ) -> Dict[str, Any]:
         mode = self.config["media"].get("image_mode", "auto").lower()
 
@@ -334,6 +387,7 @@ class MediaRouter:
                 if isinstance(seed, int):
                     generator = torch.Generator(device=self._device).manual_seed(seed)
                 
+                # Note: Local SDXL pipeline does not support reference images in this simple implementation
                 result = pipe(
                     prompt=prompt,
                     negative_prompt=negative,
@@ -365,6 +419,7 @@ class MediaRouter:
                 steps=steps,
                 width=width,
                 height=height,
+                reference_images=reference_images,
             )
 
         if mode == "sdnext":

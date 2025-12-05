@@ -21,6 +21,9 @@ export default function CharacterEditor({ character, onClose, onSave }: Characte
         }
     );
     const [saving, setSaving] = useState(false);
+    const [refImages, setRefImages] = useState<{ id: number; url: string }[]>(
+        character?.reference_images || []
+    );
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -126,6 +129,63 @@ export default function CharacterEditor({ character, onClose, onSave }: Characte
                             </select>
                         </div>
                     </div>
+
+                    {/* Reference Images Section */}
+                    {character?.id && (
+                        <div className="border-t border-gray-700 pt-4">
+                            <label className="mb-2 block text-sm font-medium">Reference Images (Max 5)</label>
+                            <div className="mb-4 grid grid-cols-5 gap-2">
+                                {refImages.map((img) => (
+                                    <div key={img.id} className="relative group aspect-[2/3] overflow-hidden rounded-lg bg-black/20">
+                                        <img src={`${import.meta.env.VITE_API_URL || ''}${img.url}`} alt="Ref" className="h-full w-full object-cover" />
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                if (confirm('Delete this reference image?')) {
+                                                    try {
+                                                        await apiClient.deleteReferenceImage(character.id, img.id);
+                                                        setRefImages(prev => prev.filter(p => p.id !== img.id));
+                                                        onSave(); // Trigger parent refresh too
+                                                    } catch (err) {
+                                                        alert('Delete failed');
+                                                    }
+                                                }
+                                            }}
+                                            className="absolute right-1 top-1 rounded-full bg-red-500/80 p-1 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                                        >
+                                            <X size={12} />
+                                        </button>
+                                    </div>
+                                ))}
+                                {refImages.length < 5 && (
+                                    <label className="flex aspect-[2/3] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-600 hover:border-candy-pink hover:bg-white/5">
+                                        <span className="text-2xl">+</span>
+                                        <span className="text-xs">Upload</span>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="hidden"
+                                            onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    try {
+                                                        const res = await apiClient.uploadReferenceImage(character.id, file);
+                                                        if (res.ok && res.url && res.id) {
+                                                            setRefImages(prev => [...prev, { id: res.id, url: res.url }]);
+                                                            onSave(); // Trigger parent refresh too
+                                                        }
+                                                    } catch (err) {
+                                                        alert('Upload failed');
+                                                    }
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                )}
+                            </div>
+                            <p className="text-xs text-gray-400">These images will be used by ComfyUI (IPAdapter) to keep character consistency.</p>
+                        </div>
+                    )}
 
                     <div className="flex justify-end gap-2 pt-4">
                         <button type="button" onClick={onClose} className="btn-secondary">

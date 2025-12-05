@@ -28,6 +28,7 @@ export default function App() {
   const [showRightSidebar, setShowRightSidebar] = useState(false);
   const [status, setStatus] = useState<ServiceStatus | null>(null);
 
+
   // Modals
   const [showCharEditor, setShowCharEditor] = useState(false);
   const [editingChar, setEditingChar] = useState<Character | null>(null);
@@ -149,7 +150,7 @@ export default function App() {
         playAudio(res.audio_base64, aiMsg.id);
       }
 
-    } catch (err) {
+    } catch (err: any) {
       console.error("Send failed", err);
       setMessages(prev => [...prev, {
         id: Date.now(),
@@ -299,7 +300,6 @@ export default function App() {
     }
   };
 
-  // Media Logic
   // Media Logic
   const handleGenerateMedia = async (prompt: string, negative?: string) => {
     if (!selectedCharId) return;
