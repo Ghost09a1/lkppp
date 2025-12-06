@@ -818,18 +818,24 @@ def create_app() -> FastAPI:
                 if llm_prompt:
                     # Add Pony tags
                     pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
-                    prompt = f"{pony_tags}, {llm_prompt}"
+                    prompt = f"{pony_tags}"
                     
-                    # Append character visual style
+                    # Append character visual style (Priority 1: Trigger Words)
                     if character.get("visual_style"):
                         prompt += f", {character.get('visual_style')}"
+                    
+                    # Append LLM prompt (Priority 2: Scene Description)
+                    prompt += f", {llm_prompt}"
                     
                     # Fetch reference images
                     refs = db.get_character_reference_images(conn, char_id)
                     ref_paths = [r["image_path"] for r in refs]
 
-                    logger.info(f"[CHAT] Generating image: {prompt[:100]}...")
-                    img_res = await media.generate_image(prompt, steps=20, reference_images=ref_paths)
+                    # Use character negative prompt if available
+                    neg_prompt = character.get("negative_prompt", "")
+
+                    logger.info(f"[CHAT] Generating image: {prompt[:100]}... (neg: {neg_prompt[:30]}...)")
+                    img_res = await media.generate_image(prompt, negative=neg_prompt, steps=20, reference_images=ref_paths)
                     
                     if img_res.get("ok") and img_res.get("images_base64"):
                         image_b64 = img_res.get("images_base64")[0]
@@ -840,46 +846,6 @@ def create_app() -> FastAPI:
                         logger.warning(f"[CHAT] Image generation failed: {img_res.get('error')}")
             except Exception as exc:
                 logger.error(f"[CHAT] Image generation exception: {exc}")
-        
-        # Process tool calls if present (Phase 2: Tool Calling)
-        if tool_calls and isinstance(tool_calls, list):
-            for tool_call in tool_calls:
-                func_name = tool_call.get("function", {}).get("name")
-                if func_name == "generate_image" and payload and payload.enable_image:
-                    try:
-                        import json as _json
-                        args = _json.loads(tool_call.get("function", {}).get("arguments", "{}"))
-                        llm_prompt = args.get("prompt", "")
-                        aspect_ratio = args.get("aspect_ratio", "9:16")
-                        
-                        # Map aspect ratio to dimensions
-                        dimensions = {
-                            "1:1": (512, 512),
-                            "16:9": (768, 432),
-                            "9:16": (512, 768)
-                        }
-                        width, height = dimensions.get(aspect_ratio, (512, 768))
-                        
-                        # Add Pony tags
-                        pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
-                        final_prompt = f"{pony_tags}, {llm_prompt}"
-                        if character.get("visual_style"):
-                            final_prompt += f", {character.get('visual_style')}"
-                        
-                        # Fetch reference images
-                        refs = db.get_character_reference_images(conn, char_id)
-                        ref_paths = [r["image_path"] for r in refs]
-
-                        logger.info(f"[CHAT] Tool call: generate_image with prompt='{llm_prompt}' aspect={aspect_ratio}")
-                        img_res = await media.generate_image(final_prompt, steps=20, width=width, height=height, reference_images=ref_paths)
-                        
-                        if img_res.get("ok") and img_res.get("images_base64"):
-                            image_b64 = img_res.get("images_base64")[0]
-                            if image_b64 and not image_b64.startswith("data:"):
-                                image_b64 = f"data:image/png;base64,{image_b64}"
-                            logger.info("[CHAT] Tool call image generation successful.")
-                    except Exception as exc:
-                        logger.error(f"[CHAT] Tool call image generation failed: {exc}")
 
         return {
             "reply": _clean_display_text(reply),  # Clean for display (no tokens)
@@ -1122,30 +1088,6 @@ def create_app() -> FastAPI:
     @app.post("/characters/{char_id}/voice_sample_url")
     async def upload_voice_sample_url(char_id: int, payload: Dict[str, str]):
         url = payload.get("url")
-        if not url:
-            raise HTTPException(status_code=400, detail="No URL provided")
-        voices_dir = ROOT / "outputs" / "voices"
-        voices_dir.mkdir(parents=True, exist_ok=True)
-        out_path = voices_dir / f"char_{char_id}.wav"
-        # download audio via yt-dlp as wav
-        try:
-            result = subprocess.run(
-                [
-                    "yt-dlp",
-                    "-x",
-                    "--audio-format",
-                    "wav",
-                    "-o",
-                    str(out_path),
-                    url,
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-        except FileNotFoundError:
-            raise HTTPException(status_code=500, detail="yt-dlp not installed on server.")
 
         if result.returncode != 0 or not out_path.exists():
             raise HTTPException(

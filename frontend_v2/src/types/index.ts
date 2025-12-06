@@ -12,6 +12,7 @@ export interface Character {
     voice_model_path?: string;
     voice_training_status?: string;
     reference_images?: { id: number; url: string }[];
+    negative_prompt?: string;
 }
 
 export interface Message {

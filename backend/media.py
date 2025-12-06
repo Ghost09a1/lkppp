@@ -340,9 +340,9 @@ class MediaRouter:
         self,
         prompt: str,
         negative: str = "",
-        steps: int = 20,
-        width: int = 512,
-        height: int = 768,
+        steps: int = 25,
+        width: int = 832,
+        height: int = 1216,
         reference_images: list[str] = [],
     ) -> Dict[str, Any]:
         mode = self.config["media"].get("image_mode", "auto").lower()

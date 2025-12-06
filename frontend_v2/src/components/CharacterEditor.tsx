@@ -101,6 +101,32 @@ export default function CharacterEditor({ character, onClose, onSave }: Characte
                         />
                     </div>
 
+                    <div className="border-t border-gray-700 pt-4">
+                        <label className="mb-2 block text-sm font-medium text-candy-pink">Image Generation Settings</label>
+
+                        <div className="mb-4">
+                            <label className="mb-1 block text-sm font-medium text-gray-400">Positive Image Prompt (Visual Style)</label>
+                            <textarea
+                                value={formData.visual_style || ''}
+                                onChange={(e) => setFormData({ ...formData, visual_style: e.target.value })}
+                                className="input-field text-xs font-mono"
+                                rows={3}
+                                placeholder="e.g. 1girl, red hair, blue eyes, cinematic lighting..."
+                            />
+                        </div>
+
+                        <div>
+                            <label className="mb-1 block text-sm font-medium text-gray-400">Negative Image Prompt</label>
+                            <textarea
+                                value={formData.negative_prompt || ''}
+                                onChange={(e) => setFormData({ ...formData, negative_prompt: e.target.value })}
+                                className="input-field text-xs font-mono"
+                                rows={3}
+                                placeholder="e.g. bad anatomy, text, watermark, low quality..."
+                            />
+                        </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="mb-1 block text-sm font-medium">Language</label>
