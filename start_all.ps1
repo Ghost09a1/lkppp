@@ -27,11 +27,11 @@ function Start-NewPowerShell {
     Start-Process powershell.exe -ArgumentList "-NoExit", "-Command", $psCommand
 }
 
-# --- Determine Python Executable ---
+# --- Determine Main Venv Python Executable ---
 $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 if (Test-Path $venvPython) {
     $python = $venvPython
-    Write-Host "Using venv Python: $python"
+    Write-Host "Using Main venv Python: $python"
 }
 else {
     $python = "python"
@@ -48,12 +48,11 @@ function Kill-PortProcess {
         foreach ($p in $procs) {
             try { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue } catch {}
         }
-        Start-Sleep -Seconds 3  # Increased from 1 second for better reliability
+        Start-Sleep -Seconds 3
     }
 }
 
 # --- 1. Start MyCandyLocal Core (Backend, TTS, UI Opener) ---
-# This is started first as it's the central piece.
 Kill-PortProcess -Port 8000 -Name "MyCandyLocal Core"
 Start-NewPowerShell -Name "MyCandyLocal Core" -Command "& '$python' app_launcher.py"
 
@@ -76,18 +75,7 @@ if ($config.llm.mode -eq "gguf") {
         Get-Process -Name "llama-server" -ErrorAction SilentlyContinue | Stop-Process -Force
         Get-Process | Where-Object { $_.Path -like "*llama-server.exe*" } -ErrorAction SilentlyContinue | Stop-Process -Force
         
-        # Wait longer to ensure port is fully released
-        Start-Sleep -Seconds 3
-        
-        # Verify port is actually free
-        $portCheck = Get-NetTCPConnection -LocalPort $llmSettings.port -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Listen" }
-        if ($portCheck) {
-            Write-Warning "Port $($llmSettings.port) is still in use by PID $($portCheck.OwningProcess). Attempting forced cleanup..."
-            Stop-Process -Id $portCheck.OwningProcess -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
-        }
-        
-        Write-Host "Starting LLaMA server with model: $modelPath"
+        Start-Sleep -Seconds 2
         
         $llamaArgs = @(
             "-m", "`"$modelPath`"",
@@ -104,7 +92,6 @@ if ($config.llm.mode -eq "gguf") {
         $llamaCommand = "& '$llamaExe' $($llamaArgs -join ' ')"
         Write-Host "LLaMA command: $llamaCommand"
         Start-NewPowerShell -Name "LLaMA Server" -Command $llamaCommand
-
     }
     else {
         Write-Warning "LLaMA server binary not found at '$llamaExe', skipping."
@@ -114,42 +101,38 @@ else {
     Write-Host "LLM mode is '$($config.llm.mode)', skipping dedicated LLaMA server start."
 }
 
-
-
-# --- 3. Start ComfyUI Server ---
+# --- 3. Start ComfyUI Server (Intel Arc Optimized) ---
+# WICHTIG: Muss RUN_Launcher.bat nutzen, da es die DLL-Pfade für Intel IPEX setzt!
 if ($config.media.comfy_enabled) {
     $comfyDir = Join-Path $root "ComfyUI"
-    
-    # Check if ComfyUI has its own Python (standalone)
-    $comfyPython = Join-Path $comfyDir "python_standalone\python.exe"
-    $comfyMain = Join-Path $comfyDir "main.py"
+    $comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
     
     if (Test-Path $comfyDir) {
-        Write-Host "Starting ComfyUI..."
+        Write-Host "Starting ComfyUI (Intel Arc Optimized)..."
         Kill-PortProcess -Port 8188 -Name "ComfyUI"
         
-        # Option 1: Use ComfyUI's own launcher (Preferred for Arc/Special setups)
-        $comfyLauncher = Join-Path $comfyDir "RUN_Launcher.bat"
         if (Test-Path $comfyLauncher) {
-            Write-Host "Using ComfyUI's launcher: $comfyLauncher"
-            # Run the bat file inside the new PowerShell window via cmd /c
+            Write-Host "Using ComfyUI Intel Arc Launcher: $comfyLauncher"
+            # The bat file sets critical PATH for Intel IPEX DLLs:
+            # - venv\Library\bin
+            # - venv\Lib\site-packages\torch\lib
+            # - venv\Lib\site-packages\intel_extension_for_pytorch\bin
             $comfyCommand = "Set-Location '$comfyDir'; cmd /c 'RUN_Launcher.bat'"
             Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
         }
-        # Option 2: Direct Python invocation if standalone Python exists
-        elseif ((Test-Path $comfyPython) -and (Test-Path $comfyMain)) {
-            Write-Host "Using ComfyUI standalone Python: $comfyPython"
-            $comfyCommand = "Set-Location '$comfyDir'; & '$comfyPython' '$comfyMain' --port 8188"
-            Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
-        }
-        # Option 3: Use system/venv Python
-        elseif (Test-Path $comfyMain) {
-            Write-Host "Using system Python for ComfyUI"
-            $comfyCommand = "Set-Location '$comfyDir'; & '$python' '$comfyMain' --port 8188"
-            Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
-        }
         else {
-            Write-Warning "ComfyUI installation incomplete. Neither launcher nor main.py found in '$comfyDir'."
+            Write-Warning "RUN_Launcher.bat not found. Trying direct Python (may fail without DLL paths)..."
+            $comfyVenvPython = Join-Path $comfyDir "venv\Scripts\python.exe"
+            $comfyMain = Join-Path $comfyDir "main.py"
+            if ((Test-Path $comfyVenvPython) -and (Test-Path $comfyMain)) {
+                # Set PATH manually for Intel IPEX DLLs
+                $env:PATH = "$comfyDir\venv\Library\bin;$comfyDir\venv\Lib\site-packages\torch\lib;$comfyDir\venv\Lib\site-packages\intel_extension_for_pytorch\bin;$env:PATH"
+                $comfyCommand = "Set-Location '$comfyDir'; `$env:PATH = '$comfyDir\venv\Library\bin;$comfyDir\venv\Lib\site-packages\torch\lib;$comfyDir\venv\Lib\site-packages\intel_extension_for_pytorch\bin;' + `$env:PATH; & '$comfyVenvPython' '$comfyMain' --listen --disable-smart-memory"
+                Start-NewPowerShell -Name "ComfyUI" -Command $comfyCommand
+            }
+            else {
+                Write-Warning "ComfyUI installation incomplete."
+            }
         }
     }
     else {
@@ -162,7 +145,6 @@ else {
 
 
 # --- 4. Start RVC WebUI Server ---
-# Assuming RVC should be started if the directory exists.
 $rvcDir = Join-Path $root "rvc_webui"
 if (Test-Path $rvcDir) {
     $rvcVenvPython = Join-Path $rvcDir "venv\Scripts\python.exe"
@@ -172,12 +154,10 @@ if (Test-Path $rvcDir) {
         $rvcPython = if (Test-Path $rvcVenvPython) { $rvcVenvPython } else { $python }
         Write-Host "Using Python for RVC: $rvcPython"
 
-        # RVC WebUI needs to be run from its own directory
-        # ADDED --listen-port 7867 to avoid conflict
         Kill-PortProcess -Port 7867 -Name "RVC WebUI"
-        $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --port 7867 --pycmd '$rvcPython' --noautoopen"
+        # RVC WebUI with --nolaunch to prevent auto-browser
+        $rvcCommand = "Set-Location '$rvcDir'; & '$rvcPython' '$rvcScript' --port 7867 --pycmd '$rvcPython' --nolaunch"
         Start-NewPowerShell -Name "RVC WebUI" -Command $rvcCommand
-        
     }
     else {
         Write-Warning "RVC script 'infer-web.py' not found in '$rvcDir', skipping."
