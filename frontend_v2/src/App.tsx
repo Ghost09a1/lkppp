@@ -132,31 +132,66 @@ export default function App() {
     };
     setMessages(prev => [...prev, userMsg]);
 
+    // Create Initial AI Message (Placeholder)
+    const aiMsgId = Date.now() + 1;
+    const aiMsg: Message = {
+      id: aiMsgId,
+      role: 'assistant',
+      content: "..." // Typing indicator
+    };
+    setMessages(prev => [...prev, aiMsg]);
+
     try {
-      const res = await apiClient.sendMessage(selectedCharId, text, autoTTS, autoImage);
+      // Stream handler
+      const res = await apiClient.sendMessage(
+        selectedCharId,
+        text,
+        autoTTS,
+        autoImage,
+        false, // forceImage
+        (update) => {
+          setMessages(prev => prev.map(m => {
+            if (m.id === aiMsgId) {
+              return {
+                ...m,
+                content: update.text !== undefined ? update.text : m.content,
+                audio_base64: update.audio || m.audio_base64,
+                image_base64: update.image || m.image_base64
+              };
+            }
+            return m;
+          }));
 
-      // AI Message
-      const aiMsg: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: res.reply || "(No response)",
-        audio_base64: res.audio_base64,
-        image_base64: res.image_base64
-      };
-      setMessages(prev => [...prev, aiMsg]);
+          // Auto-play audio as soon as it arrives
+          if (update.audio && autoTTS) {
+            playAudio(update.audio, aiMsgId);
+          }
+        }
+      );
 
-      // TTS (auto-play if enabled)
-      if (res.audio_base64 && autoTTS) {
-        playAudio(res.audio_base64, aiMsg.id);
-      }
+      // Final update to ensure consistency
+      setMessages(prev => prev.map(m => {
+        if (m.id === aiMsgId) {
+          return {
+            ...m,
+            content: res.reply || "(No response)"
+          };
+        }
+        return m;
+      }));
 
     } catch (err: any) {
       console.error("Send failed", err);
-      setMessages(prev => [...prev, {
-        id: Date.now(),
-        role: 'assistant',
-        content: "Error: Could not send message."
-      }]);
+      setMessages(prev => prev.map(m => {
+        if (m.id === aiMsgId) {
+          // Keep existing content if partial, otherwise show error
+          return {
+            ...m,
+            content: m.content !== "..." ? m.content + "\n[Error: Connection lost]" : "Error: Could not send message."
+          };
+        }
+        return m;
+      }));
     } finally {
       setIsSending(false);
     }

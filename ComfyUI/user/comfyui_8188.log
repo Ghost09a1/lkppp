@@ -1,10 +1,16 @@
 ## ComfyUI-Manager: installing dependencies done.
-[2025-12-06 01:07:17.625] ** ComfyUI startup time: 2025-12-06 01:07:17.625
-[2025-12-06 01:07:17.625] ** Platform: Windows
-[2025-12-06 01:07:17.625] ** Python version: 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]
-[2025-12-06 01:07:17.626] ** Python executable: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\Scripts\python.exe
-[2025-12-06 01:07:17.626] ** ComfyUI Path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI
-[2025-12-06 01:07:17.626] ** ComfyUI Base Folder Path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI
-[2025-12-06 01:07:17.627] ** User directory: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user
-[2025-12-06 01:07:17.627] ** ComfyUI-Manager config path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\default\ComfyUI-Manager\config.ini
-[2025-12-06 01:07:17.628] ** Log path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\comfyui.log
+[2025-12-06 14:39:48.562] ** ComfyUI startup time: 2025-12-06 14:39:48.562
+[2025-12-06 14:39:48.563] ** Platform: Windows
+[2025-12-06 14:39:48.563] ** Python version: 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]
+[2025-12-06 14:39:48.563] ** Python executable: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\Scripts\python.exe
+[2025-12-06 14:39:48.563] ** ComfyUI Path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI
+[2025-12-06 14:39:48.564] ** ComfyUI Base Folder Path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI
+[2025-12-06 14:39:48.564] ** User directory: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user
+[2025-12-06 14:39:48.564] ** ComfyUI-Manager config path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\default\ComfyUI-Manager\config.ini
+[2025-12-06 14:39:48.564] ** Log path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\comfyui.log
+
+Prestartup times for custom nodes:
+[2025-12-06 14:39:50.311]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\rgthree-comfy
+[2025-12-06 14:39:50.311]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Easy-Use
+[2025-12-06 14:39:50.311]    4.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Manager
+[2025-12-06 14:39:50.311] 

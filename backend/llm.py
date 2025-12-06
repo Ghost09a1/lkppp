@@ -48,6 +48,10 @@ class LLMClient:
             self.llama_model_path = config["llm"]["llama_cpp_server"]["model_path"]
 
     def _system_prompt(self, character: Dict[str, Any]) -> str:
+        # [NEW] Allow direct system prompt override for utility tasks (e.g., prompt extraction)
+        if character.get("system_prompt"):
+            return character["system_prompt"]
+
         if character.get("force_neutral"):
             lang = character.get("language") or self.cfg.get("chat", {}).get("default_language", "en")
             persona = [
@@ -82,15 +86,16 @@ class LLMClient:
         if character.get("donts"):
             persona.append(f"Hard limits: {character['donts']}")
         persona.append("Keep replies concise and responsive unless the scene calls for more detail.")
+        # [ARCHITECTURE FIX] Stheno cannot generate valid SNAC tokens - it's a text-only model.
+        # TTS pipeline: Clean Text → pyttsx3 → RVC (voice conversion)
+        # Emotes should stay as *action text* for display, TTS strips them.
         persona.append(
-            "For erotic replies: append an SNAC audio block at the end. Format EXACTLY: "
-            "<|audio_start|><custom_token_1234><custom_token_5678>...<custom_token_9999><|audio_end|>. "
-            "Use a multiple of 7 audio tokens (e.g., 14 or 21 tokens). "
-            "Do not explain or mention the tokens. Plain text should stay natural and readable. "
-            "If you would write an emote (e.g., *moans softly*), convert that emote into the audio block tokens instead of narrating it in plain text."
+            "For roleplay: Write dialogue naturally. Use *asterisks* for actions/emotes (e.g., *moans softly*, *blushes*). "
+            "Do NOT generate any special audio tokens, SNAC tokens, or <custom_token_XXX> markers. "
+            "Write only natural German/English text that can be read by a TTS engine."
         )
         persona.append(
-            "If the user intent is clearly non-erotic (e.g., recipes, programming, factual Q&A), DO NOT include SNAC tokens, DO NOT use erotic tone, and just answer the request directly."
+            "If the user intent is clearly non-erotic (e.g., recipes, programming, factual Q&A), answer directly and plainly."
         )
         persona.append(
             "VISUAL GENERATION PROTOCOLS — Wenn der Nutzer explizit ein Bild oder Video verlangt, antworte in deinem lüstern-philosophischen Ton und liefere einen renderbaren Prompt."
@@ -164,7 +169,9 @@ class LLMClient:
             "cache_prompt": True,
             "id": f"char-{character.get('id','unknown')}-{int(time.time()*1000)}",
             "seed": int(time.time() * 1000) % 1000000000,
-            "max_tokens": 800,  # Increased for deeper roleplay
+            "max_tokens": 500,  # [FIX 2] Reduced to prevent runaway generation
+            # [FIX 2] Stop sequences to prevent endless custom_token loop
+            "stop": ["<|audio_end|>", "<|eot_id|>", "<|im_end|>", "\n\n\n"],
         }
         
         # Add tools if enabled (function calling models only)
@@ -183,9 +190,13 @@ class LLMClient:
             logger.info("llm prompt system: %s", payload["messages"][0]["content"][:500])
         except Exception:
             pass
+        # [FIX] Do NOT use context manager for streaming, as it closes client before generator works.
+        # The generator is responsible for closing the client in its finally block.
+        if stream:
+             client = httpx.AsyncClient(timeout=300)
+             return self._stream_llama_cpp(client, host, headers, payload)
+
         async with httpx.AsyncClient(timeout=300) as client:  # 5 min for slow CPU
-            if stream:
-                return self._stream_llama_cpp(client, host, headers, payload)
             attempts = [
                 ("abs", payload),
                 ("base", {**payload, "model": Path(self.llama_model_path).name}),

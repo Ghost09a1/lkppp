@@ -106,8 +106,8 @@
   },
   "10": {
     "inputs": {
-      "lora_name": "shiNayutaV5ill.safetensors",
-      "strength_model": 0.7,
+      "lora_name": "Nayuta_nikke_gekawia.safetensors",
+      "strength_model": 0.6,
       "strength_clip": 1.0,
       "model": [
         "4",

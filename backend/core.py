@@ -11,6 +11,7 @@ import shutil
 import logging
 import re
 import uuid
+import httpx
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,56 +46,51 @@ def load_config() -> Dict[str, Any]:
 def _clean_tts_text(text: str) -> str:
     """
     Prepare text for TTS:
-    - strip audio markers
-    - keep custom_token_* so the TTS backend can synthesize non-verbal sounds
-    - skip emote text unless it contains custom_token_* (in which case keep those tokens)
+    - strip ALL audio markers and special tokens
+    - strip ALL content within asterisks (actions/emotes) unless they contain specific audio tokens we want (which we don't for now)
+    - strip generation tags
     """
     import re
 
-    without_markers = re.sub(r"<\|audio_start\|>|<\|audio_end\|>", "", text, flags=re.IGNORECASE)
-    # Remove [GENERATE_IMAGE] from TTS text to prevent reading it
-    without_markers = re.sub(r"\[GENERATE_IMAGE.*?\]", "", without_markers, flags=re.IGNORECASE)
-    # [HOTFIX] Remove [GENERATE_AUDIO] from TTS text
-    without_markers = re.sub(r"\[GENERATE_AUDIO.*?\]", "", without_markers, flags=re.IGNORECASE)
-    # Remove [EMOTE:...] from TTS text
-    without_markers = re.sub(r"\[EMOTE:.*?\]", "", without_markers, flags=re.IGNORECASE)
+    # 1. Remove all XML-like tags <...> (includes <|audio_start|>, <custom_token_x>, etc.)
+    # This prevents the TTS from reading "audio start" or "custom token"
+    # Note: If we eventually WANT the TTS to play sound effects from tokens, we would selectively keep them.
+    # For now, the user says it reads "special tokens", so we nuke them all.
+    text = re.sub(r"<[^>]+>", "", text)
     
-    # [FIX] Replace underscores/dashes with space to prevent TTS reading "underscore"
-    without_markers = re.sub(r"[_\-]+", " ", without_markers)
+    # 2. Remove [GENERATE_...] tags and [EMOTE:...]
+    text = re.sub(r"\[GENERATE_[^\]]+\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[EMOTE:[^\]]+\]", "", text, flags=re.IGNORECASE)
 
-    parts: list[str] = []
-    last = 0
+    # Capture the text state before stripping actions for fallback ratio calculation
+    without_markers = text
+
+    # 3. Remove all content between asterisks *...* (actions)
+    # This is the standard "roleplay action" format. TTS should only read spoken dialogue.
+    # We replace it with a pause (comma) to keep cadence natural.
+    text = re.sub(r"\*[^*]+\*", ", ", text)
+
+    # 4. Remove residual asterisks
+    text = text.replace("*", "")
+
+    # 5. Clean up whitespace
+    text = re.sub(r"\s{2,}", " ", text)
     
-    # Regex to find *content*
-    for match in re.finditer(r"\*(.*?)\*", without_markers):
-        # text before emote (keep it)
-        parts.append(without_markers[last : match.start()])
-        
-        emote_body = match.group(1).strip()
-        tokens = re.findall(r"<custom_token_\d+>", emote_body, flags=re.IGNORECASE)
-        
-        if tokens:
-            # If it has SNAC tokens, keep ONLY the tokens (sound effect)
-            parts.append(" ".join(tokens))
-        else:
-            # No tokens -> Drop the emote entirely (silence)
-            pass
-                
-        last = match.end()
-        
-    # tail after last emote
-    parts.append(without_markers[last:])
-
-    cleaned = "".join(parts)
-    cleaned = re.sub(r"\s{2,}", " ", cleaned)
-    cleaned = cleaned.strip().strip('"').strip("'")
-
-    # [FALLBACK] If cleaning resulted in empty text (e.g. everything was in *asterisks*),
-    # use the original text but strip the asterisks so we hear SOMETHING.
-    if not cleaned and without_markers.strip():
-        cleaned = without_markers.replace("*", "").strip()
+    # [FALLBACK] Logic for mixed/action messages:
+    # If cleaning resulted in empty text OR removed significant portion (>80%) of text (implying mostly actions),
+    # switch to "Narration Mode": strip asterisks and read everything.
+    # This fixes issues where "Action1 Action2" becomes silent.
+    original_len = len(without_markers)
+    cleaned_len = len(text)
+    is_mostly_action = original_len > 20 and (cleaned_len / original_len) < 0.2
     
-    return cleaned
+    if (not text and re.search(r"[a-zA-Z0-9]", without_markers)) or is_mostly_action:
+        # Fallback: Strip asterisks and just read it
+        text = without_markers.replace("*", " ").strip()
+        # Clean up double spaces from asterisk removal
+        text = re.sub(r"\s{2,}", " ", text)
+
+    return text
 
 
 def _clean_display_text(text: str) -> str:
@@ -104,35 +100,21 @@ def _clean_display_text(text: str) -> str:
     """
     import re
     
-    # Remove audio markers (both pipe and bracket formats)
-    text = re.sub(r"<\|audio_start\|>|<audio_start>", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"<\|audio_end\|>|<audio_end>", "", text, flags=re.IGNORECASE)
+    # [AGGRESSIVE FIX] Remove ALL angle-bracket content <...> including:
+    # - <|audio_start|>, <|audio_end|>
+    # - <custom_token_XXX>
+    # - <|im_start|>, <|im_end|>
+    # - Any other <...> tags
+    text = re.sub(r"<[^>]+>", "", text)
     
-    # Remove ALL custom tokens (robust: handles missing closing bracket)
-    text = re.sub(r"<custom_token_[^>]*>?", "", text, flags=re.IGNORECASE)
-    
-    # Remove emote markers like [EMOTE:...]
-    text = re.sub(r"\[EMOTE:.*?\]", "", text, flags=re.IGNORECASE)
-
-    # Remove generation tags AND their single-line prompts
-    # Match tag + optional space + text until newline/sentence end, but preserve rest of message
-    # Remove generation tags (content is inside brackets now)
-    text = re.sub(r"\[GENERATE_IMAGE.*?\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\[GENERATE_VIDEO.*?\]", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\[GENERATE_AUDIO.*?\]", "", text, flags=re.IGNORECASE)
-    
-    # Remove ChatML special tokens that leak from llama.cpp
-    text = re.sub(r"<\|im_start\|>|<\|im_end\|>", "", text, flags=re.IGNORECASE)
-    
-    # [HOTFIX] Keep action markers *text* visible in UI
-    # Do NOT escape asterisks, let Markdown handle it (italics)
-    # text = text.replace("*", "\\*") 
+    # Remove [EMOTE:...] and [GENERATE_...] tags
+    text = re.sub(r"\[EMOTE:[^\]]*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\[GENERATE_[^\]]*\]", "", text, flags=re.IGNORECASE)
     
     # Clean up multiple spaces
     text = re.sub(r"\s{2,}", " ", text)
     
-    # Remove leading/trailing quotes and whitespace
-    return text.strip().strip('"').strip("'")
+    return text.strip()
 
 def _is_non_erotic_intent(text: str) -> bool:
     """
@@ -398,6 +380,9 @@ def create_app() -> FastAPI:
     ref_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/ref_images", StaticFiles(directory=str(ref_dir)), name="ref_images")
 
+    # [FIX 3] Mount avatars directory
+    app.mount("/avatars", StaticFiles(directory=str(avatars_dir)), name="avatars")
+
     @app.get("/")
     async def root():
         return RedirectResponse(url="/ui")
@@ -598,633 +583,293 @@ def create_app() -> FastAPI:
         _prune_uploads_dir(uploads_dir, keep=1)
 
         stt_input = upload_path
-        if upload_path.suffix.lower() != ".wav":
-            wav_converted = _convert_to_wav(upload_path)
-            if wav_converted is not None:
-                stt_input = wav_converted
-            else:
-                logger.warning("stt convert failed for %s", upload_path)
-        normalized = _normalize_audio(stt_input)
-        if normalized is not None:
+        # Normalize audio if ffmpeg available
+        normalized = _normalize_audio(upload_path)
+        if normalized:
             stt_input = normalized
 
-        lang_pref = (language or "").strip() or media.config.get("media", {}).get("whisper_language", "")
-        transcript = await media.transcribe_audio(stt_input, language=lang_pref or None)
-        # [HOTFIX] Only filter truly empty transcripts - let frontend handle dots/short strings
-        logger.info(f"[STT] Whisper returned: {repr(transcript)}")
-        if not transcript or not transcript.strip():
-            logger.warning(f"[STT] Empty transcript, returning empty string")
-            return {"text": "", "language": lang_pref or ""}
-        return {"text": transcript, "language": lang_pref or ""}
+        text = await llm_client.stt(stt_input, language)
+        return {"text": text}
     @app.post("/api/stt")
-    async def stt_api(
-        file: UploadFile = File(...),
-        language: str = Form(""),
-    ):
+    async def stt_api(file: UploadFile = File(...), language: str = Form("")):
         return await stt(file, language)
 
-    @app.post("/chat/{char_id}")
-    async def chat(
-        char_id: int,
-        request: Request,
-        payload: ChatPayload,
-    ):
+    async def chat(char_id: int, payload: ChatPayload | None, message: str, audio: UploadFile | None):
         character = db.get_character(conn, char_id)
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
-        # Ensure character has a language set; fallback to config default and persist
-        if not (character.get("language") or "").strip():
-            fallback_lang = config.get("chat", {}).get("default_language", "en")
-            character["language"] = fallback_lang
-            try:
-                cur = conn.cursor()
-                cur.execute("UPDATE characters SET language = ? WHERE id = ?", (fallback_lang, char_id))
-                conn.commit()
-            except Exception:
-                pass
 
-        # Accept message from JSON body
-        user_text = payload.message.strip()
-        raw_user_text = user_text
-        transcript: str | None = None
-        
-        # DEBUG: Log received payload
-        logger.info(f"[CHAT-DEBUG] payload={'present' if payload else 'None'}, enable_image={payload.enable_image if payload else 'N/A'}, force_image={payload.force_image if payload else 'N/A'}")
-        
-        # [HOTFIX] Also read enable_tts from raw JSON body as fallback
-        enable_tts_from_request = None
-        if payload is not None:
-            enable_tts_from_request = payload.enable_tts
-        
-        # Fallback: if still empty, try raw JSON body
-        if not user_text:
-            try:
-                raw = await request.body()
-                if raw:
-                    import json as _json
-
-                    data = _json.loads(raw)
-                    if isinstance(data, dict):
-                        user_text = str(data.get("message", "") or data.get("text", "") or "").strip()
-                        # Also try to read enable_tts from here if not already set
-                        if enable_tts_from_request is None and "enable_tts" in data:
-                            enable_tts_from_request = bool(data.get("enable_tts", True))
-            except Exception:
-                pass
-        
-        # Determine image generation intent
-        should_gen_image = False
+        user_text = ""
         if payload:
-            if payload.force_image:
-                should_gen_image = True
-            elif payload.enable_image:
-                should_gen_image = True
-                logger.info(f"[CHAT] Auto-image enabled, will generate image for: {user_text[:50]}...")
+            user_text = payload.message
+        elif message:
+            user_text = message
         
-        # Magic phrase detection (only if not already forced/enabled, or to override disable)
-        # Actually, if enable_image is False, we still want to allow magic phrases to trigger it (as per requirements)
-        if not should_gen_image and _has_image_intent(user_text):
-            should_gen_image = True
-            logger.info(f"[CHAT] Magic phrase detected in '{user_text}', enabling image generation.")
+        # Audio input (STT) overrides text if present
+        if audio:
+            uploads_dir = ROOT / "outputs" / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            upload_path = uploads_dir / f"{int(time.time())}.wav"
+            with upload_path.open("wb") as f:
+                f.write(await audio.read())
+            _prune_uploads_dir(uploads_dir, keep=1)
+            
+            stt_res = await llm_client.stt(upload_path, character.get("language","en"))
+            if stt_res:
+                user_text = stt_res
+            else:
+                user_text = "(Audio unintelligible)"
+        
+        # Only check intent if we have text
+        should_gen_image = False
+        if user_text:
+            should_gen_image = _has_image_intent(user_text) or (payload and payload.force_image)
 
-        logger.info("chat recv char=%s len=%s image_gen=%s", char_id, len(user_text), should_gen_image)
-
-        if not user_text:
-            raise HTTPException(status_code=400, detail="Empty message.")
-
-        # Audio upload is handled via separate /stt endpoint
-
-        # Enforce language hint into the user text to steer the model
-        lang_pref = (character.get("language") or "").strip().lower() or media.config.get("media", {}).get("whisper_language", "")
-        if lang_pref.startswith("de"):
-            user_text = f"[Bitte auf Deutsch antworten] {user_text}"
-        else:
-            user_text = f"[Please reply in English] {user_text}"
-
+        # 2. Add user message to DB
         memory.add_message(char_id, "user", user_text)
-        # DEBUG: send only latest user to avoid stale history contamination
-        history = [{"role": "user", "content": user_text}]
-        
-        # [PHASE 1 FIX] Strong hint for image generation if enabled
-        if payload and payload.enable_image:
-            history.insert(0, {
-                "role": "system", 
-                "content": (
-                    "SYSTEM NOTE: Auto-image generation is ENABLED. "
-                    "If the user asks for a picture, you MUST append a visual description tag at the end. "
-                    "CRITICAL: The description inside the tag MUST BE IN ENGLISH, even if the chat is German. "
-                    "Use detailed, descriptive keywords. NSFW/Adult content is allowed and expected for this roleplay. "
-                    "Format: [GENERATE_IMAGE <English description, comma separated tags>]. "
-                    "Example: [GENERATE_IMAGE solo, female, large breasts, cleavage, blushing, bedroom, cinematic lighting]"
-                )
-            })
-            logger.info("[CHAT] Auto-image enabled, system note injected")
-            
-        logger.info("chat llm input char=%s history=%s last_user=%s", char_id, len(history), (user_text or "")[:500])
-        fallback_msg = "LLM unavailable. Ensure llama.cpp server or Ollama is running locally."
-        reply = None
-        tool_calls = None
-        
-        # retry loop to avoid showing fallback when the model is still warming up
-        for attempt in range(3):
-            logger.info("llm call attempt=%s char=%s user='%s' history_len=%s", attempt, char_id, (user_text or "")[:200], len(history))
-            llm_response = await llm_client.generate_chat(character, history, stream=False)
-            
-            # Check if response is a dict (tool calling response) or string (normal response)
-            if isinstance(llm_response, dict):
-                # Tool calling response
-                reply = llm_response.get("content", "")
-                tool_calls = llm_response.get("tool_calls", [])
-                logger.info(f"[CHAT] LLM returned tool calls: {len(tool_calls)} call(s)")
-                break
-            elif llm_response and llm_response != fallback_msg:
-                # Normal text response
-                reply = llm_response
-                break
-            
-            await asyncio.sleep(0.8)
 
-        if reply is None or reply == fallback_msg:
-            print("[chat] LLM returned None or fallback")
-            reply = fallback_msg
-        else:
-            reply = _dedupe_reply(reply)
-            preview = (reply[:120] + "...") if len(reply) > 120 else reply
-            print(f"[chat] reply ok (len={len(reply)}) for char {char_id}: {preview}")
-            logger.info("chat reply char=%s len=%s", char_id, len(reply))
-        # Avoid polluting history with fallback error text
-        if reply != fallback_msg:
-            memory.add_message(char_id, "assistant", reply)
-        await memory.maybe_summarize(char_id)
-        # TTS uses cleaned text to avoid reading asterisks/markup
-        tts_text = _clean_tts_text(reply)
-        logger.info("chat tts_text_len=%s", len(tts_text))
-
-        audio_b64: str | None = None
-        # Only generate TTS if enabled (saves resources and prevents token leakage)
-        # [HOTFIX] Use enable_tts_from_request which was read earlier
-        enable_tts = enable_tts_from_request if enable_tts_from_request is not None else True
-        logger.info(f"[CHAT] enable_tts={enable_tts} (explicit={enable_tts_from_request is not None}), tts_text_len={len(tts_text)}")
-        
-        if enable_tts:
-            try:
-                logger.info(f"[CHAT] Calling TTS with text: {tts_text[:100]}...")
-                tts_result = await media.tts(tts_text, character)
-                logger.info(f"[CHAT] TTS result: ok={tts_result.get('ok')}, has_audio={bool(tts_result.get('audio_base64'))}, audio_len={len(tts_result.get('audio_base64') or '')}")
-                
-                if tts_result.get("ok") and tts_result.get("audio_base64"):
-                    audio_b64 = tts_result.get("audio_base64")
-                    if audio_b64 and not audio_b64.startswith("data:"):
-                        audio_b64 = f"data:audio/wav;base64,{audio_b64}"
-                    logger.info(f"[CHAT] TTS success, final audio_b64 len={len(audio_b64)}")
-                else:
-                    logger.warning(f"[CHAT] TTS failed: {tts_result.get('error')}")
-                    audio_b64 = None
-            except Exception as exc:
-                logger.warning(f"[CHAT] TTS exception: {exc}")
-                audio_b64 = None
-        else:
-            logger.info("[CHAT] TTS skipped (enable_tts=False)")
-            audio_b64 = None
-
-            audio_b64 = None
-
-        # Image Generation - MOVED after LLM reply (see below) to use LLM's prompt
-        # when [GENERATE_IMAGE] tag is present
-        image_b64: str | None = None
-        # The actual image generation now happens after we have the LLM reply
-        
-        # Image Generation - Unified logic for both auto-image and LLM tags
-        # Priority: LLM prompt > User text (if auto-image enabled)
-        if (should_gen_image or (reply and "[GENERATE_IMAGE]" in reply.upper())):
-            try:
-                llm_prompt = None
-                
-                # Check if LLM provided a specific prompt via tag
-                if reply and "[GENERATE_IMAGE]" in reply.upper():
-                    import re
-                    match = re.search(r'\[GENERATE_IMAGE\](.+?)(?:\[|$)', reply, re.IGNORECASE | re.DOTALL)
-                    if match:
-                        llm_prompt = match.group(1).strip()
-                        logger.info(f"[CHAT] Using LLM-generated image prompt: {llm_prompt[:100]}...")
-                
-                # Fallback to safe default if no LLM prompt (but auto-image is enabled/forced)
-                if not llm_prompt and should_gen_image:
-                    # [FIX] Do NOT use user_text (raw chat) as it confuses the model (e.g. "Das wäre ein Traum" -> garbage image)
-                    # Instead, use a generic safe prompt for the character
-                    llm_prompt = "solo, looking at viewer, selfie, smile"
-                    logger.info(f"[CHAT] No specific image tag from LLM. Using safe fallback prompt: {llm_prompt}")
-                
-                if llm_prompt:
-                    # Add Pony tags
-                    pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
-                    prompt = f"{pony_tags}"
-                    
-                    # Append character visual style (Priority 1: Trigger Words)
-                    if character.get("visual_style"):
-                        prompt += f", {character.get('visual_style')}"
-                    
-                    # Append LLM prompt (Priority 2: Scene Description)
-                    prompt += f", {llm_prompt}"
-                    
-                    # Fetch reference images
-                    refs = db.get_character_reference_images(conn, char_id)
-                    ref_paths = [r["image_path"] for r in refs]
-
-                    # Use character negative prompt if available
-                    neg_prompt = character.get("negative_prompt", "")
-
-                    logger.info(f"[CHAT] Generating image: {prompt[:100]}... (neg: {neg_prompt[:30]}...)")
-                    img_res = await media.generate_image(prompt, negative=neg_prompt, steps=20, reference_images=ref_paths)
-                    
-                    if img_res.get("ok") and img_res.get("images_base64"):
-                        image_b64 = img_res.get("images_base64")[0]
-                        if image_b64 and not image_b64.startswith("data:"):
-                            image_b64 = f"data:image/png;base64,{image_b64}"
-                        logger.info("[CHAT] Image generation successful.")
-                    else:
-                        logger.warning(f"[CHAT] Image generation failed: {img_res.get('error')}")
-            except Exception as exc:
-                logger.error(f"[CHAT] Image generation exception: {exc}")
-
-        return {
-            "reply": _clean_display_text(reply),  # Clean for display (no tokens)
-            "reply_tts": tts_text,  # Clean for TTS (keeps voice tokens)
-            "audio_base64": audio_b64,
-            "image_base64": image_b64,
-            "user_text": user_text,
-            "transcription": transcript or "",
-        }
-
-    @app.post("/posts/{char_id}/image")
-    async def generate_image_post(char_id: int, payload: ImagePayload):
-        """
-        Manual image generation endpoint.
-        """
-        logger.info(f"[IMAGE] Manual generation request for char {char_id}: {payload.prompt}")
-        
-        # Get character for style info
-        character = db.get_character(conn, char_id)
-        
-        # Pony model requires specific score tags
-        pony_tags = "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime"
-        prompt = f"{pony_tags}, {payload.prompt}"
-        
-        if character and character.get("visual_style"):
-            prompt += f", {character.get('visual_style')}"
-            
-        res = await media.generate_image(
-            prompt=prompt,
-            negative=payload.negative,
-            steps=payload.steps,
-            width=payload.width,
-            height=payload.height
-        )
-        
-        # Format response for frontend
-        if res.get("ok") and res.get("images_base64"):
-            img_b64 = res.get("images_base64")[0]
-            if img_b64 and not img_b64.startswith("data:"):
-                img_b64 = f"data:image/png;base64,{img_b64}"
-            return {
-                "ok": True,
-                "prompt": payload.prompt,
-                "image_base64": img_b64
-            }
-        else:
-            error_msg = res.get("error", "Image generation failed")
-            logger.error(f"[IMAGE] Generation failed for char {char_id}: {error_msg}")
-            raise HTTPException(status_code=500, detail=error_msg)
-    @app.post("/api/chat/{char_id}")
-    async def chat_api(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
-        return await chat(char_id, payload, message, audio)
-
-    @app.post("/chat_stream/{char_id}")
-    async def chat_stream(char_id: int, payload: ChatPayload):
-        character = db.get_character(conn, char_id)
-        if not character:
-            raise HTTPException(status_code=404, detail="Character not found")
-        memory.add_message(char_id, "user", payload.message)
+        # 3. Get context & generate reply
         history = memory.get_context(char_id)
-        history.append({"role": "user", "content": payload.message})
-        stream = await llm_client.generate_chat(character, history, stream=True)
-        if stream is None:
-            async def error_stream():
-                yield "data: LLM unavailable. Ensure backend model is running.\n\n"
-
-            return EventSourceResponse(error_stream())
-
+        
+        # Add user message to history provided to LLM
+        history.append({"role": "user", "content": user_text})
+        
+        # Check for non-erotic intent to temporarily disable SNAC tokens in the prompt
+        # (This logic is handled inside LLMClient._system_prompt now via 'force_neutral' flag if needed,
+        # but here we just pass the history.)
+        
+        # 6. Construct SSE response
         async def event_generator():
-            buffer = []
-            async for token in stream:
-                buffer.append(token)
-                yield f"data: {token}\n\n"
-            reply_text = "".join(buffer) if buffer else ""
-            memory.add_message(char_id, "assistant", reply_text)
-            await memory.maybe_summarize(char_id)
-            yield "data: [STREAM_END]\n\n"
+            full_reply_text = ""
+            logger.info(f"[STREAM] Starting True Streaming for char {char_id}")
+            
+            try:
+                # 1. Stream Text Tokens
+                stream_gen = await llm_client.generate_chat(character, history, stream=True)
+                
+                async for chunk in stream_gen:
+                    if chunk:
+                        full_reply_text += chunk
+                        # [FIX 1] Clean tokens before sending to UI
+                        clean_chunk = _clean_display_text(chunk)
+                        if clean_chunk.strip():
+                            yield {"data": json.dumps({'type': 'token', 'token': clean_chunk})}
+
+                logger.info(f"[STREAM] Text stream done. Length: {len(full_reply_text)}")
+                
+                # 2. Save to Memory (now that we have full text)
+                clean_reply = _dedupe_reply(full_reply_text) # Dedupe logic from original code
+                memory.add_message(char_id, "assistant", clean_reply)
+                await memory.maybe_summarize(char_id)
+
+                # 3. Parallel Generation: TTS & Image
+                
+                # --- TTS Generation ---
+                tts_text = _clean_tts_text(clean_reply)
+                # DEBUG: Log TTS conditions
+                logger.info(f"[DEBUG-TTS] payload={payload}, enable_tts={payload.enable_tts if payload else 'N/A'}, tts_text_len={len(tts_text) if tts_text else 0}")
+                if (payload and payload.enable_tts) and tts_text:
+                    logger.info(f"[TTS] Calling TTS server with text len={len(tts_text)}")
+                    try:
+                        tts_res = await media.tts(tts_text, character)
+                        if tts_res.get("ok") and tts_res.get("audio_base64"):
+                            logger.info(f"[TTS] SUCCESS - Got audio_base64 len={len(tts_res['audio_base64'])}")
+                            yield {"data": json.dumps({'type': 'audio', 'audio': tts_res["audio_base64"]})}
+                        else:
+                            logger.warning(f"TTS failed or empty: {tts_res.get('error')}")
+                    except Exception as e:
+                        logger.error(f"TTS processing failed: {e}")
+                else:
+                    logger.info(f"[DEBUG-TTS] SKIPPED - payload={payload is not None}, enable_tts={payload.enable_tts if payload else False}, tts_text={bool(tts_text)}")
+
+                # --- Image Generation Logic ---
+                should_gen_image = payload and (payload.enable_image or payload.force_image)
+                logger.info(f"[DEBUG-IMG] should_gen_image={should_gen_image}, GENERATE_IMAGE_in_reply={'[GENERATE_IMAGE]' in clean_reply.upper()}")
+                if should_gen_image or "[GENERATE_IMAGE]" in clean_reply.upper():
+                    try:
+                        llm_prompt = None
+                        
+                        if clean_reply and "[GENERATE_IMAGE]" in clean_reply.upper():
+                            import re
+                            match = re.search(r'\[GENERATE_IMAGE\](.+?)(?:\[|$)', clean_reply, re.IGNORECASE | re.DOTALL)
+                            if match:
+                                llm_prompt = match.group(1).strip()
+                                logger.info(f"[CHAT] Using LLM-generated image prompt: {llm_prompt[:100]}...")
+                        
+                        if not llm_prompt and should_gen_image:
+                            logger.info(f"[CHAT] No [GENERATE_IMAGE] tag found. Attempting smart prompt extraction...")
+                            
+                            extraction_prompt = (
+                                f"Task: Translate this narrative into a comma-separated list of visual tags (PonyXL format) for character: {character.get('name')}.\n"
+                                "Rules: Output ONLY the tags. No filler.\n"
+                                f"Input Text:\n{clean_reply[:1500]}"
+                            )
+                            
+                            try:
+                                # Quick separate call for prompt extraction
+                                extraction_history = [{"role": "user", "content": extraction_prompt}]
+                                extracted_tags = await llm_client.generate_chat(
+                                    {"name": "Prompt Extractor", "force_neutral": True}, 
+                                    extraction_history, 
+                                    stream=False
+                                )
+                                
+                                if extracted_tags and isinstance(extracted_tags, str) and len(extracted_tags) > 5:
+                                    if ":" in extracted_tags:
+                                        extracted_tags = extracted_tags.split(":", 1)[1]
+                                    llm_prompt = extracted_tags.strip()
+                                    logger.info(f"[CHAT] Smart extraction success: {llm_prompt}")
+                                else:
+                                    llm_prompt = "solo, looking at viewer"
+                            except Exception as ext_exc:
+                                logger.warning(f"[CHAT] Smart extraction failed: {ext_exc}")
+                                llm_prompt = "solo, looking at viewer"
+                        
+                        if llm_prompt:
+                            pony_tags = "score_9, score_8_up, score_7_up"
+                            trigger_word = "nayuta (goddess of victory: nikke)"
+                            prompt = f"{pony_tags}, {trigger_word}, {character.get('visual_style', '')}, {llm_prompt}"
+                            
+                            refs = db.get_character_reference_images(conn, char_id)
+                            ref_paths = [r["image_path"] for r in refs]
+                            neg_prompt = character.get("negative_prompt", "")
+
+                            logger.info(f"[CHAT] Generating image...")
+                            img_res = await media.generate_image(prompt, negative=neg_prompt, steps=20, reference_images=ref_paths)
+                            
+                            if img_res.get("ok") and img_res.get("images_base64"):
+                                img_b64_data = img_res.get("images_base64")[0]
+                                if img_b64_data and not img_b64_data.startswith("data:"):
+                                    img_b64_data = f"data:image/png;base64,{img_b64_data}"
+                                
+                                filename = _save_image_file(img_b64_data)
+                                image_b64_url = f"/outputs/images/{filename}"
+                                
+                                yield {"data": json.dumps({'type': 'image', 'image': img_b64_data, 'url': image_b64_url})}
+                    
+                    except Exception as e:
+                        logger.error(f"[CHAT] Image generation error: {e}") 
+            
+            except Exception as e:
+                logger.error(f"[STREAM] Critical error in event generator: {e}")
+                yield {"data": json.dumps({'type': 'token', 'token': f"\n[System Error: {str(e)}]"})}
+            
+            yield {"data": "[STREAM_END]"}
 
         return EventSourceResponse(event_generator())
 
-    @app.post("/generate_image")
-    async def generate_image(payload: ImagePayload):
-        result = await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height)
-        images = result.get("images_base64") or []
-        url = ""
-        if images:
-            prefixed = images[0] if images[0].startswith("data:") else f"data:image/png;base64,{images[0]}"
-            filename = _save_image_file(prefixed)
-            url = f"/images/{filename}"
-            result["image_url"] = url
-            result["image_base64"] = prefixed
-        return result
-
-    @app.post("/posts/{char_id}/image")
-    async def attach_image_to_post(char_id: int, payload: ImagePayload):
-        if not (payload.prompt or "").strip():
-            raise HTTPException(status_code=400, detail="Prompt required for image generation.")
+    # [FIX 4] Real status health checks for LLM and TTS
+    @app.get("/status")
+    async def status():
+        llm_online = False
+        tts_online = False
+        llm_port = config.get("llm", {}).get("llama_cpp_server", {}).get("port", 8082)
+        tts_port = config.get("media", {}).get("tts_port", 8020)
         
-        # Fetch reference images
-        refs = db.get_character_reference_images(conn, char_id)
-        ref_paths = [r["image_path"] for r in refs]
-
-        result = await media.generate_image(payload.prompt, payload.negative, payload.steps, payload.width, payload.height, reference_images=ref_paths)
-        if not result.get("ok"):
-            raise HTTPException(status_code=500, detail=result.get("error", "Image generation failed."))
-        images = result.get("images_base64") or []
-        if not images:
-            raise HTTPException(status_code=500, detail="No image returned.")
-        prefixed = images[0] if images[0].startswith("data:") else f"data:image/png;base64,{images[0]}"
-        filename = _save_image_file(prefixed)
-        return {
-            "ok": True,
-            "image_base64": prefixed,
-            "image_url": f"/images/{filename}",
-            "prompt": payload.prompt,
-        }
-    @app.post("/api/posts/{char_id}/image")
-    async def attach_image_to_post_api(char_id: int, payload: ImagePayload):
-        return await attach_image_to_post(char_id, payload)
-
-    @app.post("/generate_video")
-    async def generate_video(payload: VideoPayload):
-        prompt = (payload.prompt or "").strip()
-        if not prompt:
-            raise HTTPException(status_code=400, detail="Prompt required for video generation.")
-        duration = max(5, min(120, payload.duration or 60))
-        return await media.generate_video(prompt, duration=duration)
-
-    @app.post("/posts/{char_id}/video")
-    async def attach_video_to_post(char_id: int, payload: VideoPayload):
-        prompt = (payload.prompt or "").strip()
-        emote_used = ""
-        if not prompt and payload.use_last_emote:
-            emote_used = _last_emote(char_id)
-            if emote_used:
-                prompt = f"{emote_used}, cinematic atmosphere"
-        if not prompt:
-            raise HTTPException(
-                status_code=400,
-                detail="Provide a prompt or ensure a recent emote exists to derive one.",
-            )
-        duration = max(5, min(120, payload.duration or 60))
-        result = await media.generate_video(prompt, duration=duration)
-        if not result.get("ok"):
-            raise HTTPException(status_code=500, detail=result.get("error", "Video generation failed."))
-        video_path = Path(result.get("video_path", ""))
-        video_url = f"/videos/{video_path.name}" if video_path.name else ""
-        return {
-            "ok": True,
-            "video_url": video_url,
-            "video_path": str(video_path) if video_path else "",
-            "cover_base64": result.get("cover_base64", ""),
-            "prompt_used": prompt,
-            "emote_used": emote_used,
-            "duration": duration,
-        }
-    @app.post("/api/posts/{char_id}/video")
-    async def attach_video_to_post_api(char_id: int, payload: VideoPayload):
-        return await attach_video_to_post(char_id, payload)
-
-    @app.post("/tts")
-    async def tts(payload: TtsPayload):
-        character = db.get_character(conn, payload.character_id) if payload.character_id else None
-        return await media.tts(payload.message, character)
-    @app.post("/api/tts")
-    async def tts_api(payload: TtsPayload):
-        return await tts(payload)
-
-    @app.post("/characters/{char_id}/voice_sample")
-    async def upload_voice_sample(char_id: int, file: bytes = None):
-        if file is None:
-            raise HTTPException(status_code=400, detail="No file provided")
-        voices_dir = ROOT / "outputs" / "voices"
-        voices_dir.mkdir(parents=True, exist_ok=True)
-        out_path = voices_dir / f"char_{char_id}.wav"
-        with open(out_path, "wb") as f:
-            f.write(file)
-        cur = conn.cursor()
-        cur.execute("UPDATE characters SET voice_ref_path = ? WHERE id = ?", (str(out_path), char_id))
-        conn.commit()
-        return {"ok": True, "path": str(out_path)}
-    @app.post("/api/characters/{char_id}/voice_sample")
-    async def upload_voice_sample_api(char_id: int, file: bytes = None):
-        return await upload_voice_sample(char_id, file)
-
-    @app.post("/characters/{char_id}/reference_images")
-    async def upload_reference_image(char_id: int, file: UploadFile = File(...)):
-        logging.getLogger("mycandy.core").info("Uploading reference image: filename=%s, content_type=%s", file.filename, file.content_type)
-        if not file.content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail=f"Invalid image format: {file.content_type}")
-        
-        ref_dir = ROOT / "outputs" / "ref_images"
-        ref_dir.mkdir(parents=True, exist_ok=True)
-        
-        filename = f"ref_{char_id}_{uuid.uuid4().hex}{Path(file.filename).suffix}"
-        out_path = ref_dir / filename
-        
-        with out_path.open("wb") as f:
-            f.write(await file.read())
-            
         try:
-            img_id = db.add_character_reference_image(conn, char_id, str(out_path))
-        except ValueError as e:
-            # Cleanup if DB fails (e.g. max limit reached)
-            out_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail=str(e))
-            
-        return {"ok": True, "id": img_id, "url": f"/ref_images/{filename}"}
+            async with httpx.AsyncClient(timeout=2) as c:
+                r = await c.get(f"http://127.0.0.1:{llm_port}/health")
+                llm_online = r.status_code == 200
+        except Exception:
+            pass
+        
+        try:
+            async with httpx.AsyncClient(timeout=2) as c:
+                r = await c.get(f"http://127.0.0.1:{tts_port}/health")
+                tts_online = r.status_code == 200
+        except Exception:
+            pass
+        
+        return {"status": "ok", "backend": "running", "llm_online": llm_online, "tts_online": tts_online}
 
-    @app.delete("/characters/{char_id}/reference_images/{img_id}")
-    async def delete_reference_image(char_id: int, img_id: int):
-        # Get path first to delete file
-        refs = db.get_character_reference_images(conn, char_id)
-        target = next((r for r in refs if r["id"] == img_id), None)
-        if not target:
-            raise HTTPException(status_code=404, detail="Image not found")
-            
-        if db.delete_character_reference_image(conn, img_id, char_id):
-            try:
-                Path(target["image_path"]).unlink(missing_ok=True)
-            except Exception:
-                pass
-            return {"ok": True}
-        raise HTTPException(status_code=404, detail="Image not found")
-
+    # [FIX 3b] Avatar upload endpoint
     @app.post("/characters/{char_id}/avatar")
     async def upload_avatar(char_id: int, file: UploadFile = File(...)):
         character = db.get_character(conn, char_id)
         if not character:
             raise HTTPException(status_code=404, detail="Character not found")
-        if file.content_type not in ("image/png", "image/jpeg", "image/jpg"):
-            raise HTTPException(status_code=400, detail="Only PNG/JPEG images are allowed")
+        if file.content_type not in ("image/png", "image/jpeg", "image/jpg", "image/webp"):
+            raise HTTPException(status_code=400, detail="Only PNG/JPEG/WEBP images are allowed")
+        
+        # Save avatar file
         prev = character.get("avatar_path") or None
-        filename = _save_avatar_file(char_id, file, prev_path=prev)
+        filename = f"char_{char_id}_{int(time.time())}.png"
+        out_path = avatars_dir / filename
+        
+        # Remove old avatar if present
+        if prev:
+            old = avatars_dir / prev
+            if old.exists():
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+        
+        data = await file.read()
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(data)).convert("RGBA")
+            img = img.resize((100, 100))
+            img.save(out_path, format="PNG")
+        except Exception:
+            out_path.write_bytes(data)
+        
         cur = conn.cursor()
         cur.execute("UPDATE characters SET avatar_path = ? WHERE id = ?", (filename, char_id))
         conn.commit()
         return {"ok": True, "avatar_path": filename, "url": f"/avatars/{filename}"}
 
-    @app.post("/characters/{char_id}/voice_sample_url")
-    async def upload_voice_sample_url(char_id: int, payload: Dict[str, str]):
-        url = payload.get("url")
+    # Voice Sample Upload
+    @app.post("/characters/{char_id}/voice_sample")
+    async def upload_voice_sample(char_id: int, file: UploadFile = File(...)):
+        """Upload a voice sample (MP3/WAV) for RVC training."""
+        character = db.get_character(conn, char_id)
+        if not character:
+            raise HTTPException(status_code=404, detail="Character not found")
+        
+        allowed_types = ("audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav", "audio/m4a", "audio/x-m4a")
+        if file.content_type and file.content_type not in allowed_types:
+            raise HTTPException(status_code=400, detail="Only MP3/WAV/M4A audio files are allowed")
+        
+        # Create voice data directory
+        voice_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
+        voice_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save with original extension
+        ext = Path(file.filename or "sample.mp3").suffix or ".mp3"
+        filename = f"sample_{int(time.time())}{ext}"
+        out_path = voice_dir / filename
+        
+        data = await file.read()
+        out_path.write_bytes(data)
+        
+        logger.info(f"[VOICE] Saved voice sample for char {char_id}: {out_path}")
+        return {"ok": True, "path": str(out_path), "size": len(data)}
 
-        if result.returncode != 0 or not out_path.exists():
-            raise HTTPException(
-                status_code=500,
-                detail=f"Download failed: {result.stderr}",
-            )
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE characters SET voice_ref_path = ?, voice_youtube_url = ? WHERE id = ?",
-            (str(out_path), url, char_id),
-        )
-        conn.commit()
-        return {"ok": True, "path": str(out_path)}
-    @app.post("/api/characters/{char_id}/voice_sample_url")
-    async def upload_voice_sample_url_api(char_id: int, payload: Dict[str, str]):
-        return await upload_voice_sample_url(char_id, payload)
-
-    @app.post("/characters/{char_id}/voice_dataset")
-    async def upload_voice_dataset(char_id: int, file: UploadFile = File(...)):
-        raw_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        saved_files = []
-        filename = file.filename or "upload"
-        suffix = Path(filename).suffix.lower()
-        if suffix == ".zip":
-            tmp_zip = raw_dir / "_tmp_upload.zip"
-            with tmp_zip.open("wb") as f:
-                f.write(await file.read())
-            try:
-                with zipfile.ZipFile(tmp_zip, "r") as zf:
-                    zf.extractall(raw_dir)
-            finally:
-                tmp_zip.unlink(missing_ok=True)
-            _convert_dir_to_wav(raw_dir)
-            saved_files = [str(p) for p in raw_dir.glob("**/*.wav")]
-        else:
-            temp_target = raw_dir / filename
-            with temp_target.open("wb") as f:
-                f.write(await file.read())
-            if suffix in {".mp3", ".m4a", ".ogg", ".flac"}:
-                wav_target = _convert_to_wav(temp_target)
-                if wav_target is None:
-                    raise HTTPException(status_code=500, detail="ffmpeg missing or audio conversion failed.")
-                try:
-                    temp_target.unlink()
-                except Exception:
-                    pass
-                saved_files = [str(wav_target)]
-            else:
-                # assume already wav
-                saved_files = [str(temp_target)]
-        voice_ref = _first_wav_in_raw(char_id)
-        if voice_ref:
-            cur = conn.cursor()
-            cur.execute(
-                "UPDATE characters SET voice_ref_path = ? WHERE id = ?",
-                (voice_ref, char_id),
-            )
-            conn.commit()
-        return {"ok": True, "files": saved_files, "voice_ref_path": voice_ref}
-    @app.post("/api/characters/{char_id}/voice_dataset")
-    async def upload_voice_dataset_api(char_id: int, file: UploadFile = File(...)):
-        return await upload_voice_dataset(char_id, file)
-
+    # Train Voice Model
     @app.post("/characters/{char_id}/train_voice")
     async def train_voice(char_id: int):
-        raw_dir = ROOT / "data" / "voices" / f"char_{char_id}" / "raw"
-        if not raw_dir.exists() or not any(raw_dir.glob("*.wav")):
-            raise HTTPException(status_code=400, detail="No WAV files uploaded. Use /voice_dataset first.")
+        """Start RVC voice training for a character."""
+        character = db.get_character(conn, char_id)
+        if not character:
+            raise HTTPException(status_code=404, detail="Character not found")
+        
         _set_training_status(char_id, "queued", "")
         thread = threading.Thread(target=_run_training, args=(char_id,), daemon=True)
         thread.start()
         return {"ok": True, "status": "queued"}
-    @app.post("/api/characters/{char_id}/train_voice")
-    async def train_voice_api(char_id: int):
-        return await train_voice(char_id)
 
-    @app.get("/health")
-    async def health_check():
-        """Simple health check endpoint"""
-        return {"status": "ok", "service": "MyCandyLocal"}
-
-    @app.get("/status")
-    async def service_status():
-        """Check status of all services"""
-        status = {
-            "backend": "online",
-            "llm": "unknown",
-            "tts": "unknown",
-            "image_gen": "unknown"
-        }
-        
-        # Check LLM service
+    @app.post("/chat/{char_id}")
+    async def chat_endpoint(char_id: int, payload: ChatPayload | None = Body(None), message: str = Form(""), audio: UploadFile | None = File(None)):
         try:
-            llm_mode = config.get("llm", {}).get("mode", "gguf")
-            if llm_mode == "gguf":
-                llm_port = config.get("llm", {}).get("llama_cpp_server", {}).get("port", 8081)
-                llm_host = config.get("backend_host", "127.0.0.1")
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(1)
-                result = sock.connect_ex((llm_host, llm_port))
-                sock.close()
-                status["llm"] = "online" if result == 0 else "offline"
-            else:
-                # Ollama mode
-                status["llm"] = "unknown"
-        except Exception:
-            status["llm"] = "offline"
-        
-        # Check TTS service
-        try:
-            if media_cfg.get("tts_enabled"):
-                tts_port = media_cfg.get("tts_port", 8020)
-                import socket
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(1)
-                result = sock.connect_ex(("127.0.0.1", tts_port))
-                sock.close()
-                status["tts"] = "online" if result == 0 else "offline"
-            else:
-                status["tts"] = "disabled"
-        except Exception:
-            status["tts"] = "offline"
-        
-        # Check image generation
-        try:
-            if media_cfg.get("comfy_enabled") or media_cfg.get("sdnext_enabled"):
-                status["image_gen"] = "configured"
-            else:
-                status["image_gen"] = "disabled"
-        except Exception:
-            status["image_gen"] = "unknown"
-        
-        return status
+            return await chat(char_id, payload, message, audio)
+        except Exception as e:
+            logger.error(f"Chat endpoint error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     return app
 
 
 app = create_app()
+

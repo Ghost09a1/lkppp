@@ -630,7 +630,7 @@ elif model_management.xformers_enabled():
 elif model_management.flash_attention_enabled():
     logging.info("Using Flash Attention")
     optimized_attention = attention_flash
-elif model_management.pytorch_attention_enabled():
+elif int(torch.__version__.split('.')[0]) >= 2:
     logging.info("Using pytorch attention")
     optimized_attention = attention_pytorch
 else:
@@ -658,7 +658,7 @@ register_attention_function("split", attention_split)
 
 def optimized_attention_for_device(device, mask=False, small_input=False):
     if small_input:
-        if model_management.pytorch_attention_enabled():
+        if int(torch.__version__.split('.')[0]) >= 2:
             return attention_pytorch #TODO: need to confirm but this is probably slightly faster for small inputs in all cases
         else:
             return attention_basic

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Mic, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { Character } from '../types';
 import { apiClient } from '../api/client';
 
@@ -24,6 +24,10 @@ export default function CharacterEditor({ character, onClose, onSave }: Characte
     const [refImages, setRefImages] = useState<{ id: number; url: string }[]>(
         character?.reference_images || []
     );
+    // Voice Training State
+    const [voiceFile, setVoiceFile] = useState<File | null>(null);
+    const [trainingStatus, setTrainingStatus] = useState(character?.voice_training_status || '');
+    const [isTraining, setIsTraining] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -58,6 +62,50 @@ export default function CharacterEditor({ character, onClose, onSave }: Characte
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">
+                    {/* Avatar Upload Section */}
+                    {character?.id && (
+                        <div className="flex items-center gap-4 pb-4 border-b border-gray-700">
+                            <div className="relative group">
+                                <div className="w-16 h-16 rounded-full bg-gray-700 overflow-hidden">
+                                    {character.avatar_path ? (
+                                        <img
+                                            src={`${import.meta.env.VITE_API_URL || ''}/avatars/${character.avatar_path}`}
+                                            alt="Avatar"
+                                            className="w-full h-full object-cover"
+                                        />
+                                    ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-gray-500 text-2xl">
+                                            {(character.name || '?')[0].toUpperCase()}
+                                        </div>
+                                    )}
+                                </div>
+                                <label className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity">
+                                    <span className="text-white text-xs">Change</span>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        className="hidden"
+                                        onChange={async (e) => {
+                                            const file = e.target.files?.[0];
+                                            if (file && character.id) {
+                                                try {
+                                                    await apiClient.uploadAvatar(character.id, file);
+                                                    onSave(); // Trigger refresh
+                                                } catch (err) {
+                                                    alert('Avatar upload failed');
+                                                }
+                                            }
+                                        }}
+                                    />
+                                </label>
+                            </div>
+                            <div className="text-sm text-gray-400">
+                                <p>Click avatar to change</p>
+                                <p className="text-xs">(PNG/JPEG, 100x100px)</p>
+                            </div>
+                        </div>
+                    )}
+
                     <div>
                         <label className="mb-1 block text-sm font-medium">Name *</label>
                         <input
@@ -155,6 +203,111 @@ export default function CharacterEditor({ character, onClose, onSave }: Characte
                             </select>
                         </div>
                     </div>
+
+                    {/* Voice Training Section */}
+                    {character?.id && (
+                        <div className="border-t border-gray-700 pt-4">
+                            <label className="mb-2 block text-sm font-medium text-candy-pink flex items-center gap-2">
+                                <Mic size={16} />
+                                Voice Training (RVC)
+                            </label>
+
+                            <div className="space-y-3">
+                                {/* Current Status */}
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-gray-400">Status:</span>
+                                    {trainingStatus === 'done' && (
+                                        <span className="flex items-center gap-1 text-green-400">
+                                            <CheckCircle size={14} /> Ready
+                                        </span>
+                                    )}
+                                    {trainingStatus === 'running' && (
+                                        <span className="flex items-center gap-1 text-pink-400 animate-pulse">
+                                            <Loader2 size={14} className="animate-spin" /> Training...
+                                        </span>
+                                    )}
+                                    {trainingStatus === 'queued' && (
+                                        <span className="flex items-center gap-1 text-amber-400">
+                                            <Loader2 size={14} /> Queued
+                                        </span>
+                                    )}
+                                    {trainingStatus === 'failed' && (
+                                        <span className="flex items-center gap-1 text-red-400">
+                                            <AlertCircle size={14} /> Failed
+                                        </span>
+                                    )}
+                                    {!trainingStatus && (
+                                        <span className="text-gray-500">No model yet</span>
+                                    )}
+                                </div>
+
+                                {/* Upload Voice Sample */}
+                                <div className="flex items-center gap-2">
+                                    <label className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed border-gray-600 hover:border-candy-pink hover:bg-white/5 cursor-pointer transition-colors">
+                                        <Mic size={16} />
+                                        <span className="text-sm">
+                                            {voiceFile ? voiceFile.name : 'Upload Voice Sample (MP3/WAV)'}
+                                        </span>
+                                        <input
+                                            type="file"
+                                            accept="audio/*,.mp3,.wav,.m4a"
+                                            className="hidden"
+                                            onChange={async (e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    setVoiceFile(file);
+                                                    try {
+                                                        await apiClient.uploadVoiceSample(character.id, file);
+                                                        alert('Voice sample uploaded!');
+                                                    } catch (err) {
+                                                        alert('Upload failed');
+                                                    }
+                                                }
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+
+                                {/* Train Button */}
+                                <button
+                                    type="button"
+                                    disabled={isTraining || trainingStatus === 'running'}
+                                    onClick={async () => {
+                                        setIsTraining(true);
+                                        setTrainingStatus('queued');
+                                        try {
+                                            await apiClient.trainVoice(character.id);
+                                            setTrainingStatus('running');
+                                            // Poll for status (simplified - in production use WebSocket)
+                                            alert('Training started! Check status in a few minutes.');
+                                        } catch (err) {
+                                            setTrainingStatus('failed');
+                                            alert('Training failed to start');
+                                        } finally {
+                                            setIsTraining(false);
+                                        }
+                                    }}
+                                    className="w-full py-2 px-4 rounded-lg bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 font-medium transition-all flex items-center justify-center gap-2"
+                                >
+                                    {isTraining ? (
+                                        <>
+                                            <Loader2 size={16} className="animate-spin" />
+                                            Starting...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Mic size={16} />
+                                            Train Voice Model
+                                        </>
+                                    )}
+                                </button>
+
+                                <p className="text-xs text-gray-500">
+                                    Upload 5-10 minutes of clean voice audio. Training takes ~10-30 minutes.
+                                </p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Reference Images Section */}
                     {character?.id && (
