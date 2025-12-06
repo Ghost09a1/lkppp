@@ -8,3 +8,243 @@
 [2025-12-06 15:05:28.420] ** User directory: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user
 [2025-12-06 15:05:28.420] ** ComfyUI-Manager config path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\default\ComfyUI-Manager\config.ini
 [2025-12-06 15:05:28.420] ** Log path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\comfyui.log
+
+Prestartup times for custom nodes:
+[2025-12-06 15:05:30.017]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\rgthree-comfy
+[2025-12-06 15:05:30.017]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Easy-Use
+[2025-12-06 15:05:30.017]    3.9 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Manager
+[2025-12-06 15:05:30.017] 
+[2025-12-06 15:05:31.846] Checkpoint files will always be loaded safely.
+[2025-12-06 15:05:32.010] Total VRAM 11940 MB, total RAM 32691 MB
+[2025-12-06 15:05:32.010] pytorch version: 2.9.1+xpu
+[2025-12-06 15:05:32.011] Set vram state to: NORMAL_VRAM
+[2025-12-06 15:05:32.012] Disabling smart memory management
+[2025-12-06 15:05:32.012] Device: xpu:0 Intel(R) Arc(TM) B580 Graphics
+[2025-12-06 15:05:33.490] Using pytorch attention
+[2025-12-06 15:05:35.667] Python version: 3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]
+[2025-12-06 15:05:35.668] ComfyUI version: 0.3.68
+[2025-12-06 15:05:35.698] ComfyUI frontend version: 1.28.8
+[2025-12-06 15:05:35.701] [Prompt Server] web root: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\lib\site-packages\comfyui_frontend_package\static
+[2025-12-06 15:05:37.131] 
+💜 AKATZ NODES 💜
+[2025-12-06 15:05:37.131] 
+[2025-12-06 15:05:37.252] Note: NumExpr detected 24 cores but "NUMEXPR_MAX_THREADS" not set, so enforcing safe limit of 16.
+[2025-12-06 15:05:37.253] NumExpr defaulting to 16 threads.
+[2025-12-06 15:05:37.520] [Crystools [0;32mINFO[0m] Crystools version: 1.27.4
+[2025-12-06 15:05:37.535] [Crystools [0;32mINFO[0m] Platform release: 10
+[2025-12-06 15:05:37.535] [Crystools [0;32mINFO[0m] JETSON: Not detected.
+[2025-12-06 15:05:37.536] [Crystools [0;32mINFO[0m] CPU: AMD Ryzen 9 3900X 12-Core Processor - Arch: AMD64 - OS: Windows 10
+[2025-12-06 15:05:37.537] [Crystools [0;31mERROR[0m] pynvml is not installed. No module named 'pynvml'
+[2025-12-06 15:05:37.537] [Crystools [0;33mWARNING[0m] No GPU monitoring libraries available.
+[2025-12-06 15:05:37.562] xFormers not available
+[2025-12-06 15:05:37.564] xFormers not available
+[2025-12-06 15:05:38.668] 
+Depthcrafter Nodes Loaded
+[2025-12-06 15:05:38.668] 
+[2025-12-06 15:05:39.019] [ComfyUI-Easy-Use] server: v1.3.4 Loaded
+[2025-12-06 15:05:39.021] [ComfyUI-Easy-Use] web root: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Easy-Use\web_version/v2 Loaded
+[2025-12-06 15:05:39.050] ComfyUI-GGUF: Allowing full torch compile
+[2025-12-06 15:05:39.059] ### Loading: ComfyUI-Impact-Pack (V8.25.1)
+[2025-12-06 15:05:39.211] [Impact Pack] Wildcards loading done.
+[2025-12-06 15:05:39.218] ### Loading: ComfyUI-Impact-Subpack (V1.3.5)
+[2025-12-06 15:05:39.221] [Impact Pack/Subpack] Using folder_paths to determine whitelist path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\default\ComfyUI-Impact-Subpack\model-whitelist.txt
+[2025-12-06 15:05:39.222] [Impact Pack/Subpack] Ensured whitelist directory exists: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\default\ComfyUI-Impact-Subpack
+[2025-12-06 15:05:39.222] [Impact Pack/Subpack] Loaded 0 model(s) from whitelist: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\user\default\ComfyUI-Impact-Subpack\model-whitelist.txt
+[2025-12-06 15:05:39.282] [Impact Subpack] ultralytics_bbox: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\models\ultralytics\bbox
+[2025-12-06 15:05:39.284] [Impact Subpack] ultralytics_segm: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\models\ultralytics\segm
+[2025-12-06 15:05:39.287] ### Loading: ComfyUI-Inspire-Pack (V1.22.2)
+[2025-12-06 15:05:39.386] ### Loading: ComfyUI-Manager (V3.37.1)
+[2025-12-06 15:05:39.388] [ComfyUI-Manager] network_mode: public
+[2025-12-06 15:05:39.390] ### ComfyUI Revision: UNKNOWN (The currently installed ComfyUI is not a Git repository)
+[2025-12-06 15:05:39.508] [ComfyUI-Manager] default cache updated: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/alter-list.json
+[2025-12-06 15:05:39.528] [ComfyUI-Manager] default cache updated: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/model-list.json
+[2025-12-06 15:05:39.580] [ComfyUI-Manager] default cache updated: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/github-stats.json
+[2025-12-06 15:05:39.659] [ComfyUI-Manager] default cache updated: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json
+[2025-12-06 15:05:39.983] [ComfyUI-Manager] default cache updated: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json
+[2025-12-06 15:05:40.147] Traceback (most recent call last):
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\nodes.py", line 2131, in load_custom_node
+    module_spec.loader.exec_module(module)
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\__init__.py", line 1, in <module>
+    from .node import SAM2ModelLoader, GroundingDinoModelLoader, GroundingDinoSAM2Segment, InvertMask, IsMaskEmptyNode
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\node.py", line 22, in <module>
+    from local_groundingdino.models import build_model as local_groundingdino_build_model
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\local_groundingdino\models\__init__.py", line 8, in <module>
+    from .GroundingDINO import build_groundingdino
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\local_groundingdino\models\GroundingDINO\__init__.py", line 15, in <module>
+    from .groundingdino import build_groundingdino
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\local_groundingdino\models\GroundingDINO\groundingdino.py", line 32, in <module>
+    from .backbone import build_backbone
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\local_groundingdino\models\GroundingDINO\backbone\__init__.py", line 1, in <module>
+    from .backbone import build_backbone
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\local_groundingdino\models\GroundingDINO\backbone\backbone.py", line 30, in <module>
+    from .swin_transformer import build_swin_transformer
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2\local_groundingdino\models\GroundingDINO\backbone\swin_transformer.py", line 19, in <module>
+    from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+ModuleNotFoundError: No module named 'timm'
+
+[2025-12-06 15:05:40.150] Cannot import C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2 module for custom nodes: No module named 'timm'
+[2025-12-06 15:05:40.252] ComfyUI found: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI
+[2025-12-06 15:05:40.253] 'C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI' added to sys.path
+[2025-12-06 15:05:40.260] [VideoHelperSuite] - WARNING - Failed to import imageio_ffmpeg
+[2025-12-06 15:05:40.298] (pysssss:WD14Tagger) [DEBUG] Available ORT providers: AzureExecutionProvider, CPUExecutionProvider
+[2025-12-06 15:05:40.298] (pysssss:WD14Tagger) [DEBUG] Using ORT providers: CUDAExecutionProvider, CPUExecutionProvider
+[2025-12-06 15:05:40.323] ------------------------------------------
+[2025-12-06 15:05:40.323] Comfyroll Studio v1.76 :  175 Nodes Loaded
+[2025-12-06 15:05:40.324] ------------------------------------------
+[2025-12-06 15:05:40.324] ** For changes, please see patch notes at https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes/blob/main/Patch_Notes.md
+[2025-12-06 15:05:40.325] ** For help, please see the wiki at https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes/wiki
+[2025-12-06 15:05:40.326] ------------------------------------------
+[2025-12-06 15:05:40.338] [C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_controlnet_aux] | INFO -> Using ckpts path: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_controlnet_aux\ckpts
+[2025-12-06 15:05:40.340] [C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_controlnet_aux] | INFO -> Using symlinks: False
+[2025-12-06 15:05:40.341] [C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_controlnet_aux] | INFO -> Using ort providers: ['CUDAExecutionProvider', 'DirectMLExecutionProvider', 'OpenVINOExecutionProvider', 'ROCMExecutionProvider', 'CPUExecutionProvider', 'CoreMLExecutionProvider']
+[2025-12-06 15:05:40.361] C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_controlnet_aux\node_wrappers\dwpose.py:26: UserWarning: DWPose: Onnxruntime not found or doesn't come with acceleration providers, switch to OpenCV with CPU device. DWPose might run very slowly
+  warnings.warn("DWPose: Onnxruntime not found or doesn't come with acceleration providers, switch to OpenCV with CPU device. DWPose might run very slowly")
+[2025-12-06 15:05:40.389] FizzleDorf Custom Nodes: Loaded
+[2025-12-06 15:05:40.410] # 😺dzNodes: LayerStyle -> Cannot import name 'guidedFilter' from 'cv2.ximgproc'
+A few nodes cannot works properly, while most nodes are not affected. Please REINSTALL package 'opencv-contrib-python'.
+For detail refer to https://github.com/chflame163/ComfyUI_LayerStyle/issues/5
+[2025-12-06 15:05:40.775] Traceback (most recent call last):
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\nodes.py", line 2131, in load_custom_node
+    module_spec.loader.exec_module(module)
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_smZNodes\__init__.py", line 61, in <module>
+    from .nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_smZNodes\nodes.py", line 9, in <module>
+    from .smZNodes import HijackClip, HijackClipComfy, get_learned_conditioning
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_smZNodes\smZNodes.py", line 20, in <module>
+    from .modules.text_processing import prompt_parser
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_smZNodes\modules\text_processing\prompt_parser.py", line 5, in <module>
+    from compel import Compel
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\lib\site-packages\compel\__init__.py", line 6, in <module>
+    from compel.convenience_wrappers import *
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\lib\site-packages\compel\convenience_wrappers.py", line 6, in <module>
+    from networkx.algorithms.shortest_paths.weighted import negative_edge_cycle
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\lib\site-packages\networkx\__init__.py", line 23, in <module>
+    config = utils.backends._set_configs_from_environment()
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\lib\site-packages\networkx\utils\backends.py", line 574, in _set_configs_from_environment
+    backends=Config(
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\venv\lib\site-packages\networkx\utils\configs.py", line 84, in __new__
+    cls = dataclass(
+  File "C:\Users\Ghost\AppData\Local\Programs\Python\Python310\lib\dataclasses.py", line 1175, in wrap
+    return _process_class(cls, init, repr, eq, order, unsafe_hash,
+  File "C:\Users\Ghost\AppData\Local\Programs\Python\Python310\lib\dataclasses.py", line 1024, in _process_class
+    _init_fn(all_init_fields,
+  File "C:\Users\Ghost\AppData\Local\Programs\Python\Python310\lib\dataclasses.py", line 579, in _init_fn
+    return _create_fn('__init__',
+  File "C:\Users\Ghost\AppData\Local\Programs\Python\Python310\lib\dataclasses.py", line 432, in _create_fn
+    exec(txt, globals, ns)
+  File "<string>", line 1
+    def __create_fn__(_type_nx-loopback, MISSING, _HAS_DEFAULT_FACTORY, __dataclass_builtins_object__, _return_type):
+                              ^
+SyntaxError: invalid syntax
+
+[2025-12-06 15:05:40.779] Cannot import C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_smZNodes module for custom nodes: invalid syntax (<string>, line 1)
+[2025-12-06 15:05:40.831] [C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfy_mtb] | INFO -> loaded 110 nodes successfuly
+[2025-12-06 15:05:40.835] [C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfy_mtb] | INFO -> Some nodes (3) could not be loaded. This can be ignored, but go to http://127.0.0.1:8188/mtb if you want more information.
+[2025-12-06 15:05:40.902] Efficiency Nodes: Attempting to add Control Net options to the 'HiRes-Fix Script' Node (comfyui_controlnet_aux add-on)...Success!
+[2025-12-06 15:05:40.910] Traceback (most recent call last):
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\nodes.py", line 2131, in load_custom_node
+    module_spec.loader.exec_module(module)
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\Jovimetrix\__init__.py", line 42, in <module>
+    from cozy_comfyui import \
+ModuleNotFoundError: No module named 'cozy_comfyui'
+
+[2025-12-06 15:05:40.911] Cannot import C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\Jovimetrix module for custom nodes: No module named 'cozy_comfyui'
+[2025-12-06 15:05:40.940] 
+[2025-12-06 15:05:40.940] [rgthree-comfy] Loaded 48 extraordinary nodes. 🎉
+[2025-12-06 15:05:40.942] 
+[2025-12-06 15:05:41.878] WAS Node Suite: OpenCV Python FFMPEG support is enabled
+[2025-12-06 15:05:41.878] WAS Node Suite Warning: `ffmpeg_bin_path` is not set in `C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\was-node-suite-comfyui\was_suite_config.json` config file. Will attempt to use system ffmpeg binaries if available.
+[2025-12-06 15:05:42.611] WAS Node Suite: Finished. Loaded 220 nodes successfully.
+[2025-12-06 15:05:42.611] 
+	"Success is not about being better than someone else. It's about being better than you used to be." - Unknown
+[2025-12-06 15:05:42.613] 
+[2025-12-06 15:05:42.622] 
+Import times for custom nodes:
+[2025-12-06 15:05:42.623]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\websocket_image_save.py
+[2025-12-06 15:05:42.623]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\sdxl_prompt_styler
+[2025-12-06 15:05:42.625]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Image-Selector
+[2025-12-06 15:05:42.625]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-IC-Light-Native
+[2025-12-06 15:05:42.626]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\sd-dynamic-thresholding
+[2025-12-06 15:05:42.626]    0.0 seconds (IMPORT FAILED): C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\Jovimetrix
+[2025-12-06 15:05:42.627]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-GGUF
+[2025-12-06 15:05:42.627]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-WD14-Tagger
+[2025-12-06 15:05:42.628]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_IPAdapter_plus
+[2025-12-06 15:05:42.628]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\cg-use-everywhere
+[2025-12-06 15:05:42.629]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\mikey_nodes
+[2025-12-06 15:05:42.630]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Florence2
+[2025-12-06 15:05:42.631]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-layerdiffuse
+[2025-12-06 15:05:42.641]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-TeaCache
+[2025-12-06 15:05:42.643]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Custom-Scripts
+[2025-12-06 15:05:42.644]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_FizzNodes
+[2025-12-06 15:05:42.645]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_essentials
+[2025-12-06 15:05:42.647]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Frame-Interpolation
+[2025-12-06 15:05:42.649]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-DepthAnythingV2
+[2025-12-06 15:05:42.651]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui-portrait-master
+[2025-12-06 15:05:42.652]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_UltimateSDUpscale
+[2025-12-06 15:05:42.653]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\Derfuu_ComfyUI_ModdedNodes
+[2025-12-06 15:05:42.655]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Advanced-ControlNet
+[2025-12-06 15:05:42.656]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_Mira
+[2025-12-06 15:05:42.657]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-KJNodes
+[2025-12-06 15:05:42.657]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Manager
+[2025-12-06 15:05:42.658]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\rgthree-comfy
+[2025-12-06 15:05:42.658]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_Comfyroll_CustomNodes
+[2025-12-06 15:05:42.659]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-AnimateDiff-Evolved
+[2025-12-06 15:05:42.659]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_controlnet_aux
+[2025-12-06 15:05:42.660]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-VideoHelperSuite
+[2025-12-06 15:05:42.660]    0.0 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-AKatz-Nodes
+[2025-12-06 15:05:42.661]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\efficiency-nodes-comfyui
+[2025-12-06 15:05:42.663]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfy_mtb
+[2025-12-06 15:05:42.665]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Inspire-Pack
+[2025-12-06 15:05:42.666]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Impact-Subpack
+[2025-12-06 15:05:42.666]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Easy-Use
+[2025-12-06 15:05:42.667]    0.1 seconds (IMPORT FAILED): C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-SAM2
+[2025-12-06 15:05:42.668]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-to-Python-Extension
+[2025-12-06 15:05:42.668]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui_openvino
+[2025-12-06 15:05:42.671]    0.1 seconds (IMPORT FAILED): C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_smZNodes
+[2025-12-06 15:05:42.671]    0.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI_LayerStyle
+[2025-12-06 15:05:42.671]    0.2 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Impact-Pack
+[2025-12-06 15:05:42.672]    0.3 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Detail-Daemon
+[2025-12-06 15:05:42.672]    0.4 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-Crystools
+[2025-12-06 15:05:42.673]    0.6 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\comfyui-propost
+[2025-12-06 15:05:42.673]    1.1 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\ComfyUI-DepthCrafter-Nodes
+[2025-12-06 15:05:42.673]    1.7 seconds: C:\Users\Ghost\Desktop\MyCandyLocal\ComfyUI\custom_nodes\was-node-suite-comfyui
+[2025-12-06 15:05:42.674] 
+[2025-12-06 15:05:42.953] Context impl SQLiteImpl.
+[2025-12-06 15:05:42.954] Will assume non-transactional DDL.
+[2025-12-06 15:05:42.956] No target revision found.
+[2025-12-06 15:05:43.000] Starting server
+
+[2025-12-06 15:05:43.002] To see the GUI go to: http://127.0.0.1:8188
+[2025-12-06 15:05:43.104] FETCH ComfyRegistry Data: 5/110
+[2025-12-06 15:05:47.019] FETCH ComfyRegistry Data: 10/110
+[2025-12-06 15:05:50.615] FETCH ComfyRegistry Data: 15/110
+[2025-12-06 15:05:54.190] FETCH ComfyRegistry Data: 20/110
+[2025-12-06 15:05:57.798] FETCH ComfyRegistry Data: 25/110
+[2025-12-06 15:06:01.376] FETCH ComfyRegistry Data: 30/110
+[2025-12-06 15:06:05.246] FETCH ComfyRegistry Data: 35/110
+[2025-12-06 15:06:08.817] FETCH ComfyRegistry Data: 40/110
+[2025-12-06 15:06:12.388] FETCH ComfyRegistry Data: 45/110
+[2025-12-06 15:06:16.588] FETCH ComfyRegistry Data: 50/110
+[2025-12-06 15:06:20.151] FETCH ComfyRegistry Data: 55/110
+[2025-12-06 15:06:23.740] FETCH ComfyRegistry Data: 60/110
+[2025-12-06 15:06:27.669] FETCH ComfyRegistry Data: 65/110
+[2025-12-06 15:06:31.273] FETCH ComfyRegistry Data: 70/110
+[2025-12-06 15:06:34.870] FETCH ComfyRegistry Data: 75/110
+[2025-12-06 15:06:38.480] FETCH ComfyRegistry Data: 80/110
+[2025-12-06 15:06:42.079] FETCH ComfyRegistry Data: 85/110
+[2025-12-06 15:06:45.682] FETCH ComfyRegistry Data: 90/110
+[2025-12-06 15:06:49.870] FETCH ComfyRegistry Data: 95/110
+[2025-12-06 15:06:53.498] FETCH ComfyRegistry Data: 100/110
+[2025-12-06 15:06:57.082] FETCH ComfyRegistry Data: 105/110
+[2025-12-06 15:07:00.668] FETCH ComfyRegistry Data: 110/110
+[2025-12-06 15:07:01.169] FETCH ComfyRegistry Data [DONE]
+[2025-12-06 15:07:01.372] [ComfyUI-Manager] default cache updated: https://api.comfy.org/nodes
+[2025-12-06 15:07:01.408] FETCH DATA from: https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json [DONE]
+[2025-12-06 15:07:01.615] [ComfyUI-Manager] broken item:{'author': 'rjgoif', 'title': 'Img Label Tools', 'id': 'Img-Label-Tools', 'reference': 'https://github.com/rjgoif/ComfyUI-Img-Label-Tools', 'install_type': 'git-clone', 'description': 'Tools to help annotate images for sharing on Reddit, Discord, etc.'}
+[2025-12-06 15:07:01.662] [ComfyUI-Manager] All startup tasks have been completed.
